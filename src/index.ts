@@ -15,10 +15,12 @@ export async function main(): Promise<number> {
     process.argv.slice(1),
     process.env,
   ];
+
   if (argc < 2) {
     printUsage();
     return 1;
   }
+
   const contents = await readFile(argv[1]!, {
     encoding: "utf-8",
   });
@@ -40,11 +42,16 @@ export async function main(): Promise<number> {
   TokenStreamSchema.parse(res.tokens);
 
   console.log(
-    JSON.stringify(res.tokens, (_, v) =>
-      typeof v === "bigint" ? v.toString() : v,
-    ),
+    JSON.stringify(res.tokens, (_, v) => {
+      switch (typeof v) {
+        case "bigint":
+          return v.toString();
+        default:
+          return v;
+      }
+    }),
   );
-  console.log(`Tokenization: ${elapsedMs.toFixed(3)} ms`);
+  console.error(`Tokenization: ${elapsedMs.toFixed(3)} ms`);
 
   return 0;
 }

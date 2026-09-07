@@ -70,6 +70,7 @@ export const IntegerLiteralSchema = TokenBaseSchema.extend({
   type: z.literal("IntegerLiteral"),
   base: z.literal([2, 8, 10, 16]),
   size: z.literal([8, 16, 32, 64]),
+  signed: z.boolean(),
   value: z.bigint(),
 });
 

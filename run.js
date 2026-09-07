@@ -1,4 +1,4 @@
-import { main } from ".";
+import { main } from "./build/index.js";
 
 main()
   .catch((e) => {

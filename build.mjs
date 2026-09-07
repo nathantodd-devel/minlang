@@ -1,5 +1,6 @@
 import { build } from "esbuild";
 import ts from "typescript";
+
 if (!process.argv.includes("--no-build")) {
   await build({
     entryPoints: ["src/index.ts"],

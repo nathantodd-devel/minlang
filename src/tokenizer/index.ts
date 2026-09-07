@@ -241,7 +241,6 @@ export class Tokenizer {
 
     if (source[col]?.toLowerCase() === "e") {
       isFloat = true;
-
       col++;
 
       if (source[col] === "+" || source[col] === "-") {
@@ -257,7 +256,7 @@ export class Tokenizer {
       if (col === exponentStart) {
         this.errors.push(
           new InvalidNumericLiteralError(
-            `Invalid exponent in numeric literal`,
+            "Invalid exponent in numeric literal",
             line,
             exponentStart,
             this.file,
@@ -275,20 +274,44 @@ export class Tokenizer {
     }
 
     const suffix = source.slice(suffixStart, col);
+    const raw = source.slice(start, col);
+
+    if (!isFloat && (suffix === "f32" || suffix === "f64")) {
+      isFloat = true;
+    }
 
     if (isFloat) {
-      const size = suffix ? FLOAT_SUFFIXES.get(suffix) : 64;
+      const size = suffix === "" ? 64 : FLOAT_SUFFIXES.get(suffix);
 
-      if (suffix && size === undefined) {
-        // Don't silently turn something like `2.5foo` into
-        // FloatLiteral + Identifier.
+      if (suffix !== "" && size === undefined) {
+        this.errors.push(
+          new InvalidNumericLiteralError(
+            `Invalid float suffix '${suffix}'`,
+            line,
+            suffixStart,
+            this.file,
+          ),
+        );
+
         return col;
       }
 
-      const raw = source.slice(start, col);
-      const numericPart = suffix ? raw.slice(0, -suffix.length) : raw;
+      const numericPart = suffix === "" ? raw : raw.slice(0, -suffix.length);
 
       const value = Number(numericPart);
+
+      if (!Number.isFinite(value)) {
+        this.errors.push(
+          new InvalidNumericLiteralError(
+            `Invalid numeric literal '${raw}'`,
+            line,
+            start,
+            this.file,
+          ),
+        );
+
+        return col;
+      }
 
       this.tokens.push({
         type: "FloatLiteral",
@@ -302,30 +325,60 @@ export class Tokenizer {
       return col;
     }
 
-    const size = suffix ? INTEGER_SUFFIXES.get(suffix) : 32;
+    const size = suffix === "" ? 32 : INTEGER_SUFFIXES.get(suffix);
 
-    if (suffix && size === undefined) {
-      // Unknown suffix.
+    if (suffix !== "" && size === undefined) {
+      this.errors.push(
+        new InvalidNumericLiteralError(
+          `Invalid integer suffix '${suffix}'`,
+          line,
+          suffixStart,
+          this.file,
+        ),
+      );
+
       return col;
     }
 
-    const raw = source.slice(start, col);
-    const numericPart = suffix ? raw.slice(0, -suffix.length) : raw;
+    const numericPart = suffix === "" ? raw : raw.slice(0, -suffix.length);
 
-    // Legacy leading-zero octal.
-    //
-    // 0673 -> base 8
-    //
-    // Keep plain `0` decimal.
     let base: IntegerBase = 10;
 
     if (numericPart.length > 1 && numericPart.startsWith("0")) {
       base = 8;
+
+      if (!/^0[0-7]+$/.test(numericPart)) {
+        this.errors.push(
+          new InvalidNumericLiteralError(
+            `Invalid octal numeric literal '${raw}'`,
+            line,
+            start,
+            this.file,
+          ),
+        );
+
+        return col;
+      }
     }
 
-    const value = BigInt(
-      base === 8 ? this.parseBigInt(numericPart, 8) : numericPart,
-    );
+    let value: bigint;
+
+    try {
+      value = BigInt(base === 8 ? `0o${numericPart.slice(1)}` : numericPart);
+    } catch {
+      this.errors.push(
+        new InvalidNumericLiteralError(
+          `Invalid numeric literal '${raw}'`,
+          line,
+          start,
+          this.file,
+        ),
+      );
+
+      return col;
+    }
+
+    const signed = suffix === "" || suffix.startsWith("s");
 
     this.tokens.push({
       type: "IntegerLiteral",
@@ -335,6 +388,7 @@ export class Tokenizer {
       line,
       col: start,
       raw,
+      signed,
     });
 
     return col;
@@ -356,7 +410,6 @@ export class Tokenizer {
       col++;
     }
 
-    // 0x, 0b, or 0o with no digits.
     if (col === digitsStart) {
       this.errors.push(
         new InvalidNumericLiteralError(
@@ -377,10 +430,9 @@ export class Tokenizer {
     }
 
     const suffix = source.slice(suffixStart, col);
+    const size = suffix === "" ? 32 : INTEGER_SUFFIXES.get(suffix);
 
-    const size = suffix ? INTEGER_SUFFIXES.get(suffix) : 32;
-
-    if (suffix && size === undefined) {
+    if (suffix !== "" && size === undefined) {
       this.errors.push(
         new InvalidNumericLiteralError(
           `Invalid integer suffix '${suffix}'`,
@@ -395,7 +447,7 @@ export class Tokenizer {
 
     const raw = source.slice(start, col);
 
-    const numericPart = suffix ? raw.slice(0, -suffix.length) : raw;
+    const numericPart = suffix === "" ? raw : raw.slice(0, -suffix.length);
 
     const digits = numericPart.slice(prefix.length);
 
@@ -422,6 +474,8 @@ export class Tokenizer {
       return col;
     }
 
+    const signed = suffix === "" || suffix.startsWith("s");
+
     this.tokens.push({
       type: "IntegerLiteral",
       base,
@@ -429,6 +483,7 @@ export class Tokenizer {
       value,
       line,
       col: start,
+      signed,
       raw,
     });
 
