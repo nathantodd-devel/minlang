@@ -48,12 +48,3 @@ export async function main(): Promise<number> {
 
   return 0;
 }
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .then((exit) => {
-    process.exit(exit);
-  });
