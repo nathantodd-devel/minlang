@@ -1,0 +1,69 @@
+// lexer-errors.lang
+
+// ------------------------------------------------------------
+// Invalid decimal integer suffixes
+// ------------------------------------------------------------
+
+let invalid_integer_suffix_1 = 123foo;
+let invalid_integer_suffix_2 = 42abc;
+let invalid_integer_suffix_3 = 100i32;
+
+
+// ------------------------------------------------------------
+// Invalid floating-point suffixes
+// ------------------------------------------------------------
+
+let invalid_float_suffix_1 = 1.5foo;
+let invalid_float_suffix_2 = 2.0f16;
+let invalid_float_suffix_3 = 3.14f128;
+
+
+// ------------------------------------------------------------
+// Invalid exponent
+// ------------------------------------------------------------
+
+let invalid_exponent_1 = 1e;
+let invalid_exponent_2 = 1e+;
+let invalid_exponent_3 = 1e-;
+
+
+// ------------------------------------------------------------
+// Invalid prefixed integer literals
+// ------------------------------------------------------------
+
+let invalid_hex = 0x;
+let invalid_binary = 0b;
+let invalid_octal = 0o;
+
+
+// ------------------------------------------------------------
+// Invalid prefixed integer suffixes
+// ------------------------------------------------------------
+
+let invalid_hex_suffix = 0x40foo;
+let invalid_binary_suffix = 0b1010bar;
+let invalid_octal_suffix = 0o123xyz;
+
+
+// ------------------------------------------------------------
+// Unexpected characters
+// ------------------------------------------------------------
+
+let unexpected_dollar = $;
+let unexpected_hash = #;
+let unexpected_backtick = `;
+
+
+// ------------------------------------------------------------
+// Unterminated strings
+// ------------------------------------------------------------
+
+let unterminated_string_1 = "hello;
+let unterminated_string_2 = "hello world;
+
+
+// ------------------------------------------------------------
+// Unterminated string caused by trailing escape
+// ------------------------------------------------------------
+
+let unterminated_escape = "hello\

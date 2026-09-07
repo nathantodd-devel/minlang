@@ -1,0 +1,54 @@
+import std::{printf, strcat};
+import types::{*};
+
+fn main(argc: s32, argv: u8[?][?], envp: u8[?][?]) -> s32 {
+    let message: u8[0x40]{0} = {
+        strcat(@, "Hello, ");
+        strcat(@, "World!\n");
+        @
+    };
+
+    // Integer literals
+    let integer = 2;
+    let integer_u32 = 2u32;
+
+    // Floating-point literals
+    let float1 = 2.;
+    let float2 = 2.0;
+    let float3 = 2.5;
+    let float4 = 2e10;
+    let float5 = 2.5e-3;
+
+    // Explicit f32 literals
+    let float6 = 2f32;
+    let float7 = 2.f32;
+    let float8 = 2.0f32;
+    let float9 = 2.5f32;
+
+    // Explicitly typed values
+    let xor: u32 = 100u32 ^ 44u32;
+    let and: u32 = 0673 & 0x44;
+    let or: u16 = 0b110110 | 44;
+
+    let float: f32 = 1.5f32;
+    let double = 1.5;
+    let double2 = 2.;
+
+    if (1 == 0) {
+        printf("wut\n");
+    }
+
+    switch (double) {
+        case (1.5) {
+            printf("good\n");
+            break;
+        }
+        default {
+            printf("WHAT\n");
+        }
+    }
+
+    printf("%s", message);
+    0
+
+}
