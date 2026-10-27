@@ -48,6 +48,45 @@ fn main(argc: s32, argv: u8[?][?], envp: u8[?][?]) -> s32 {
         }
     }
 
+    // `loop` repeats until a `break`; `continue` skips to the next pass
+    let i = 0;
+    loop {
+        i = i + 1;
+
+        if (i == 3) {
+            continue;
+        }
+
+        if (i >= 10) {
+            break;
+        }
+
+        printf("%d\n", i);
+    }
+
+    // `do ... while` runs the body at least once, then checks the condition
+    let countdown = 3;
+    do {
+        printf("%d...\n", countdown);
+        countdown = countdown - 1;
+    } while (countdown > 0);
+
+    let done = false;
+    do {
+        printf("once\n");
+        done = true;
+    } while (!done);
+
+    // A bare `do` runs once; `break` leaves it early
+    do {
+        if (argc < 2) {
+            printf("no arguments\n");
+            break;
+        }
+
+        printf("%d arguments\n", argc - 1);
+    }
+
     printf("%s", message);
     0
 
