@@ -134,8 +134,10 @@ impl Type {
 }
 
 /// Whether arrays of `from` can be used where arrays of `to` are expected.
-/// Elements must match exactly since their layout must, but any size can be
-/// passed where the size is unknown (`u8[?]`).
+/// `T[?]` is a pointer to the first element, so any size can be passed where
+/// the outermost size is unknown, but the elements must match exactly:
+/// `u8[4][8]` can be a `u8[?][8]`, but not a `u8[?][?]`, which is a pointer
+/// to pointers.
 pub fn array_compatible(from: &Type, to: &Type) -> bool {
     match (from, to) {
         (
@@ -147,10 +149,7 @@ pub fn array_compatible(from: &Type, to: &Type) -> bool {
                 element: to_element,
                 size: to_size,
             },
-        ) => {
-            (to_size.is_none() || from_size == to_size)
-                && array_compatible(from_element, to_element)
-        }
+        ) => (to_size.is_none() || from_size == to_size) && from_element == to_element,
         _ => from == to,
     }
 }

@@ -1,0 +1,35 @@
+// exit: 7
+import std::printf;
+
+fn factorial(n: u64) -> u64 {
+    if (n <= 1) {
+        return 1;
+    }
+    n * factorial(n - 1)
+}
+
+fn outer(x: s32) -> s32 {
+    fn helper(y: s32) -> s32 {
+        y * 2
+    }
+    // Same-named functions in sibling blocks get different symbols
+    {
+        fn twice(y: s32) -> s32 {
+            helper(helper(y))
+        }
+        x = twice(x);
+    }
+    {
+        fn twice(y: s32) -> s32 {
+            y + y
+        }
+        x = twice(x);
+    }
+    x
+}
+
+fn main() -> s32 {
+    printf("%llu\n", factorial(20));
+    printf("%d\n", outer(3));
+    7
+}

@@ -24,6 +24,9 @@ pub struct Location {
 pub struct Expression {
     #[serde(flatten)]
     pub kind: ExpressionKind,
+    /// Unique among the expressions and patterns of one parse, so later
+    /// passes can attach information to it.
+    pub id: usize,
     pub position: Location,
     /// Indices into the parser's token stream that this expression spans.
     pub tokens: Range<usize>,
@@ -74,6 +77,8 @@ pub enum VariantFields {
 pub struct Pattern {
     #[serde(flatten)]
     pub kind: PatternKind,
+    /// Unique among the expressions and patterns of one parse.
+    pub id: usize,
     pub position: Location,
     /// Indices into the parser's token stream that this pattern spans.
     pub tokens: Range<usize>,

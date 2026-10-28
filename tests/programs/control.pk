@@ -1,0 +1,57 @@
+import std::printf;
+
+fn noisy(label: u8[?], value: bool) -> bool {
+    printf("%s ", label);
+    value
+}
+
+fn classify(n: s32) -> s32 {
+    // `if` is an expression
+    let sign = if (n < 0) { -1 } else if (n == 0) { 0 } else { 1 };
+    sign
+}
+
+fn main() -> s32 {
+    // Short-circuiting
+    if (noisy("a", false) && noisy("b", true)) {}
+    if (noisy("c", true) || noisy("d", true)) {}
+    printf("\n");
+
+    printf("%d %d %d\n", classify(-5), classify(0), classify(9));
+
+    // `continue` in a four-clause `for` goes to the step
+    for (let i: s32 = 0; i < 6; i++) {
+        if (i % 2 == 0) {
+            continue;
+        }
+        printf("%d ", i);
+    }
+    printf("\n");
+
+    // while, do-while and a bare do
+    let n = 0;
+    while (n < 3) {
+        n++;
+    }
+    do {
+        n += 10;
+    } while (n < 30);
+    do {
+        if (n > 0) {
+            break;
+        }
+        n = -1;
+    }
+    printf("%d\n", n);
+
+    // `break` leaves only the innermost loop
+    let count = 0;
+    for (let i = 0; i < 3; i++) {
+        loop {
+            count++;
+            break;
+        }
+    }
+    printf("%d\n", count);
+    0
+}

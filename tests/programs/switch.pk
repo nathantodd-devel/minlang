@@ -1,0 +1,62 @@
+import std::printf;
+
+enum Shape {
+    Circle(f32),
+    Rect { w: f32, h: f32 },
+    Empty,
+}
+
+enum Level: u8 {
+    Low = 1,
+    Mid,
+    High = 10,
+}
+
+fn describe(s: Shape) {
+    switch s {
+        case Shape::Circle(r) {
+            printf("circle %.1f\n", r);
+            break;
+        }
+        case Shape::Rect { w, h: height } {
+            printf("rect %.1fx%.1f\n", w, height);
+            break;
+        }
+        default {
+            printf("empty\n");
+        }
+    }
+}
+
+fn main() -> s32 {
+    describe(Shape::Circle(2.5f32));
+    describe(Shape::Rect { w: 3.0f32, h: 4.0f32 });
+    describe(Shape::Empty);
+
+    // Cases fall through without `break`
+    let n = 2;
+    switch n {
+        case 1 { printf("one "); }
+        case 2 { printf("two "); }
+        case 3 { printf("three "); break; }
+        case 4 { printf("four "); }
+    }
+    printf("\n");
+
+    // Enum values and casts
+    printf("%u %u %u\n", Level::Low as u8, Level::Mid as u8, Level::High as u8);
+    let level = Level::Mid;
+    switch level {
+        case Level::High { printf("high\n"); }
+        default { printf("not high\n"); }
+    }
+
+    // Constants inside variant patterns
+    let matched: s32 = 0;
+    switch Shape::Circle(1.0f32) {
+        case Shape::Circle(1.0) { matched = 1; break; }
+        case Shape::Circle(_) { matched = 2; break; }
+    }
+    printf("%d\n", matched);
+    0
+}

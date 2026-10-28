@@ -1,0 +1,59 @@
+import std::printf;
+
+fn count_to(n: s32) -> iter s32 {
+    for (let i = 1; i <= n; i++) {
+        yield i;
+    }
+}
+
+fn squares(source: iter s32) -> iter s64 {
+    for value in source {
+        let wide: s64 = value;
+        yield wide * wide;
+    }
+}
+
+fn naturals() -> iter u32 {
+    let n: u32 = 0;
+    loop {
+        yield n;
+        n++;
+    }
+}
+
+fn empty() -> iter u8 {
+    return;
+}
+
+fn main() -> s32 {
+    for square in squares(count_to(4)) {
+        printf("%lld ", square);
+    }
+    printf("\n");
+
+    // Breaking out early frees the generator
+    let total: u32 = 0;
+    for n in naturals() {
+        if (n == 5) {
+            break;
+        }
+        total += n;
+    }
+    printf("%u\n", total);
+
+    // A generator that yields nothing
+    let ran = false;
+    for x in empty() {
+        ran = true;
+    }
+    printf("%d\n", ran);
+
+    // A generator only starts running when first looped over
+    let pending = count_to(3);
+    printf("created\n");
+    for x in pending {
+        printf("%d ", x);
+    }
+    printf("\n");
+    0
+}

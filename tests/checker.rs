@@ -12,7 +12,7 @@ fn check(source: &str) -> Vec<String> {
         .clone();
 
     match Checker::new(None).check(&ast) {
-        Ok(()) => Vec::new(),
+        Ok(_) => Vec::new(),
         Err(errors) => errors.iter().map(CheckError::format).collect(),
     }
 }
@@ -152,8 +152,10 @@ fn only_declarations_at_top_level() {
 #[test]
 fn imports() {
     ok("import std::printf; fn f() { printf(\"hi\"); }");
-    ok("import std::{printf, strcat}; fn f() { strcat(1, 2); printf(); }");
-    ok("import std::{*}; fn f() { strcat(1, 2); }");
+    ok(
+        "import std::{printf, strcat}; fn f() { let b: u8[8]{0}; strcat(b, \"x\"); printf(\"y\"); }",
+    );
+    ok("import std::{*}; fn f() { let b: u8[8]{0}; strcat(b, \"x\"); }");
     ok("import types::*; fn f(a: u8) {}");
 }
 
@@ -818,8 +820,54 @@ fn argument_types() {
 }
 
 #[test]
-fn builtin_functions_are_unchecked() {
-    ok("import std::printf; fn f() { let x: s32 = printf(\"hi\", 1, true); }");
+fn builtin_function_signatures() {
+    ok("import std::{printf, strcat};
+        fn f() { let x: s32 = printf(\"hi %d %f %s\", 1, 2.5, \"there\");
+                 let buffer: u8[16]{0}; strcat(buffer, \"ab\"); }");
+    assert_eq!(
+        messages("import std::{printf, strcat}; fn f() { printf(); strcat(\"a\"); printf(1); }"),
+        [
+            "'printf' takes 1 argument, but 0 were given",
+            "'strcat' takes 2 arguments, but 1 was given",
+            "Expected 'u8[?]', found 'integer'"
+        ]
+    );
+    assert_eq!(
+        messages(
+            "import std::printf; struct P { x: s32 } fn g() -> iter s32 { yield 1; }
+             fn f() { printf(\"%d\", P { x: 1 }); printf(\"%d\", g()); }"
+        ),
+        [
+            "Cannot pass a 'P' as an extra argument to a C function",
+            "Cannot pass a 'iter s32' as an extra argument to a C function"
+        ]
+    );
+}
+
+#[test]
+fn only_the_outer_array_size_can_be_unknown() {
+    ok_body("let grid: u8[4][8]{0}; let rows: u8[?][8] = grid; let flat: u8[?] = grid[0];");
+    assert_eq!(
+        check_body("let grid: u8[4][8]{0}; let rows: u8[?][?] = grid;"),
+        ["Expected 'u8[?][?]', found 'u8[4][8]'"]
+    );
+}
+
+#[test]
+fn constant_patterns_need_comparable_values() {
+    assert_eq!(
+        check_body("let s: u8[3]{0}; switch s { case \"ab\" {} }"),
+        ["Values of type 'u8[3]' cannot be matched against constants"]
+    );
+    ok(&format!(
+        "{SHAPE} fn f(s: Shape) {{ switch s {{ case Shape::Empty {{}} }} }}"
+    ));
+    assert_eq!(
+        messages(&format!(
+            "{SHAPE} fn f(a: Shape, b: Shape) -> bool {{ a == b }}"
+        )),
+        ["Cannot apply '==' to 'Shape' and 'Shape'"]
+    );
 }
 
 #[test]

@@ -1,12 +1,11 @@
 # minlang
 
 A small, C-like systems language with explicitly sized integer/float types —
-and the Rust toolchain that tokenizes and parses it.
+and the Rust compiler that turns it into native executables through LLVM.
 
-> **Status: early work-in-progress.** The tokenizer and parser handle
-> everything in the examples and produce a full AST with structured,
-> position-aware errors. There is no type checker or code generator yet.
-> Expect breaking changes.
+> **Status: early work-in-progress.** The whole pipeline works: lexing,
+> parsing, type checking and LLVM IR generation, and every example compiles
+> and runs. Expect breaking changes.
 
 ## What it looks like
 
@@ -92,6 +91,18 @@ cargo run -- --check examples/hello.pk
 
 Errors (with file/line/column, counted from 1) go to stderr. The parser and
 checker recover after an error, so they report every problem in one run.
+
+Compile to an executable (needs `clang` on the `PATH`), or print the LLVM IR:
+
+```bash
+cargo run -- -o hello examples/hello.pk && ./hello
+cargo run -- -O2 -o hello examples/hello.pk    # optimized (-O0 to -O3)
+cargo run -- --emit-llvm examples/hello.pk     # print the .ll
+```
+
+`cargo test` also builds and runs the programs in `tests/programs` and the
+examples, comparing their output with the `.out` file next to each. Those
+tests are skipped if clang isn't installed.
 
 ## Syntax overview
 
@@ -226,6 +237,64 @@ Global variables start out zeroed, so they're always considered assigned.
 `std` contains `printf` and `strcat`; their arguments aren't checked and their
 results have an unknown type. `types` contains the built-in types.
 
+## Code generation
+
+The compiler lowers the checked program to a backend-neutral, LLVM-shaped IR
+(`src/codegen/ir.rs`). The text backend writes it as `.ll`, which clang
+compiles. Lowering is written once, so an inkwell backend (building modules
+through LLVM's API) can be added without touching it. The `inkwell` Cargo
+feature compiles a stub of that backend; see `src/codegen/inkwell.rs`.
+
+**How values are represented:**
+
+| minlang | LLVM |
+|---|---|
+| `u8`…`u64`, `s8`…`s64`, `usize` | `i8`…`i64` (`usize` is 64-bit) |
+| `f32`, `f64`, `bool` | `float`, `double`, `i1` |
+| `T[N]` | `[N x T]`, a value that is copied on assignment |
+| `T[?]`, `*T`, `&T` | `ptr`; `T[?]` points at the first element, like C |
+| `"text"` | a private constant `[N x i8]` with a terminating zero |
+| `struct` | a named struct type, e.g. `%"structs::Point"` |
+| `enum` without data | its backing integer (`i32` by default) |
+| `enum` with data | `{ tag, payload }`, the payload sized for the largest variant |
+| `iter T` | a coroutine handle (`ptr`) |
+
+**Generators** are LLVM coroutines. Calling one allocates its frame with
+`malloc` and runs nothing until it's first looped over. Each `yield` stores
+the value in the coroutine's promise and suspends. A `for x in` loop resumes
+it until it finishes, then destroys it, which frees the frame. That also
+happens when the loop is left with `break`.
+
+**Globals** with constant values (literals, strings, struct literals of
+constants, array initializers) are stored directly in the binary. Others
+start zeroed and are set by a function LLVM runs before `main`, in source
+order.
+
+**Other rules:** integer arithmetic wraps; float-to-integer `as` casts
+saturate, as in Rust; the extra arguments of variadic C functions like
+`printf` get C's promotions (`f32` to `double`, narrow integers and `bool` to
+`int`, arrays to pointers).
+
+**Symbol names** follow an uncompressed subset of the Itanium C++ ABI, so
+`c++filt`, gdb and perf demangle them. A function's name includes its module
+(the file name), any enclosing functions, and its parameter types:
+`_ZN9iterators9bytes_getERN9iterators5BytesEm` is
+`iterators::bytes_get(iterators::Bytes&, unsigned long)`. Same-named
+functions in sibling blocks get a `$2` segment (`f::$2::g()`). Everything
+except `main` has internal linkage, so nothing can clash with C libraries at
+link time.
+
+**Known limitations:**
+
+- A generator that isn't looped over to the end leaks its frame. This
+  happens when it's never looped over at all, or when a `return` leaves the
+  loop over it.
+- There are no bounds checks. Shifting by the type's width or more, and
+  dividing by zero, are undefined.
+- Layout assumes x86-64. Structs and arrays are passed by value between
+  minlang functions, which isn't the C ABI.
+- No debug info.
+
 ## Project layout
 
 ```
@@ -238,11 +307,17 @@ src/
   checker/     Checker: mod.rs (names, types and assignment checks),
                types.rs (types and conversion rules),
                builtins.rs (built-in types and modules), errors.rs
+  codegen/     Code generation: ir.rs (backend-neutral IR), lower/ (lowering:
+               expressions, control flow, switch patterns, generators),
+               text.rs (.ll backend), inkwell.rs (feature-gated stub),
+               mangle.rs (symbol names), layout.rs (sizes and alignment),
+               driver.rs (runs clang)
   error.rs     Shared GenericError<K> positioned error type
   lib.rs       Library root
   main.rs      CLI entry point
-examples/      Sample .pk source files
-tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs)
+examples/      Sample .pk source files, with expected output in .out files
+tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs,
+               codegen.rs) and end-to-end programs/ with expected output
 ```
 
 ## Roadmap
@@ -250,7 +325,7 @@ tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs)
 - [x] Tokenizer with structured, position-aware errors
 - [x] Parser / AST with error recovery
 - [x] Type checking
-- [ ] Code generation
+- [x] Code generation (LLVM IR)
 
 ## License
 

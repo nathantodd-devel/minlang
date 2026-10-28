@@ -1,0 +1,22 @@
+import std::printf;
+
+fn main() -> s32 {
+    // Float to integer saturates
+    let big = 1.0e20;
+    let huge: s32 = big as s32;
+    let negative: u8 = -3.7 as u8;
+    let truncated: s32 = 3.99 as s32;
+    printf("%d %u %d\n", huge, negative, truncated);
+
+    // Integer narrowing keeps the low bits
+    let wide: u32 = 0x12345678;
+    printf("%u %d\n", wide as u8, (wide as u16) as s16);
+
+    // Between integers and floats, and float widths
+    let half = 1 as f32 / 2 as f32;
+    let back: f64 = half;
+    printf("%.2f %.1f\n", back, 7 as f64);
+
+    printf("%d %d\n", true as u8, false as s32);
+    0
+}

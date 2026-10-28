@@ -6,6 +6,7 @@ pub use errors::*;
 pub use expression::*;
 pub use typeinfo::*;
 
+use std::cell::Cell;
 use std::ops::Range;
 
 use crate::tokenizer::{Keyword, Punctuation, Token, TokenKind, TokenStream};
@@ -69,6 +70,9 @@ pub struct Parser {
     pub errors: Vec<ParserError>,
     pub node: Ast,
     filename: Option<String>,
+    /// The id the next expression or pattern gets. A `Cell` so `finish` can
+    /// stay `&self`.
+    next_id: Cell<usize>,
     /// Set while parsing an expression that is directly followed by a block,
     /// such as an `if` condition, where `x {` must not start a struct literal.
     no_struct_literal: bool,
@@ -83,6 +87,7 @@ impl Parser {
             node: Vec::new(),
             filename: filename.map(str::to_owned),
             no_struct_literal: false,
+            next_id: Cell::new(0),
         }
     }
 
@@ -90,6 +95,7 @@ impl Parser {
         self.position = 0;
         self.errors.clear();
         self.node.clear();
+        self.next_id.set(0);
 
         while self.peek_token().is_some() {
             if self.eat(Punctuation::Semi) {
@@ -245,10 +251,17 @@ impl Parser {
         (position, start..self.position)
     }
 
+    fn new_id(&self) -> usize {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        id
+    }
+
     fn finish(&self, start: usize, kind: ExpressionKind) -> Expression {
         let (position, tokens) = self.span(start);
         Expression {
             kind,
+            id: self.new_id(),
             position,
             tokens,
         }
@@ -258,6 +271,7 @@ impl Parser {
         let (position, tokens) = self.span(start);
         Pattern {
             kind,
+            id: self.new_id(),
             position,
             tokens,
         }

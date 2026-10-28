@@ -25,11 +25,42 @@ pub fn primitive(name: &str) -> Option<Type> {
     })
 }
 
+/// A C library function. Its symbol is its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltinFunction {
+    pub name: &'static str,
+    pub params: Vec<Type>,
+    /// Whether it takes further arguments after `params`, like `printf`.
+    pub variadic: bool,
+    pub return_type: Option<Type>,
+}
+
+fn builtin_function(name: &str) -> Option<BuiltinFunction> {
+    let u8_pointer = || Type::Array {
+        element: Box::new(Type::Int(IntType::new(false, 8))),
+        size: None,
+    };
+
+    Some(match name {
+        "printf" => BuiltinFunction {
+            name: "printf",
+            params: vec![u8_pointer()],
+            variadic: true,
+            return_type: Some(Type::Int(IntType::S32)),
+        },
+        "strcat" => BuiltinFunction {
+            name: "strcat",
+            params: vec![u8_pointer(), u8_pointer()],
+            variadic: false,
+            return_type: Some(u8_pointer()),
+        },
+        _ => return None,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinMember {
-    /// A function whose signature isn't modelled yet, so calls to it are not
-    /// checked and return an unknown type.
-    Function,
+    Function(BuiltinFunction),
     Type(Type),
 }
 
@@ -43,7 +74,7 @@ pub struct Module {
 impl Module {
     pub fn member(&self, name: &str) -> Option<BuiltinMember> {
         if self.functions.contains(&name) {
-            return Some(BuiltinMember::Function);
+            return builtin_function(name).map(BuiltinMember::Function);
         }
         if self.exports_primitives {
             return primitive(name).map(BuiltinMember::Type);

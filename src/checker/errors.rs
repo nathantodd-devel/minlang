@@ -120,6 +120,11 @@ pub enum CheckErrorKind {
         path: String,
         subject: String,
     },
+    InvalidVariadicArgument(String),
+    NotConstant,
+    /// A constant pattern matched against a value that can't be compared,
+    /// like an array.
+    UnmatchableValue(String),
 }
 
 fn plural(count: usize, word: &str) -> String {
@@ -270,6 +275,13 @@ impl fmt::Display for CheckErrorKind {
                 f,
                 "'{function}' must return '{return_type}' on every path"
             ),
+            Self::NotConstant => f.write_str("Enum values must be constant integers"),
+            Self::InvalidVariadicArgument(found) => {
+                write!(f, "Cannot pass a '{found}' as an extra argument to a C function")
+            }
+            Self::UnmatchableValue(found) => {
+                write!(f, "Values of type '{found}' cannot be matched against constants")
+            }
             Self::PatternMismatch { path, subject } => write!(
                 f,
                 "'{path}' cannot match a value of type '{subject}'"

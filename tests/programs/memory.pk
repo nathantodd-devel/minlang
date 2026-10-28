@@ -1,0 +1,78 @@
+import std::{printf, strcat};
+
+struct Point {
+    x: s32,
+    y: s32,
+}
+
+struct Line {
+    from: Point,
+    to: Point,
+}
+
+// Globals: constants are stored directly, others are set before `main`
+let origin = Point { x: 0, y: 0 };
+let counter: s32 = 100;
+let table: u8[4]{7};
+let computed = square(12);
+
+fn square(n: s32) -> s32 {
+    n * n
+}
+
+fn length_squared(line: &Line) -> s32 {
+    let dx = line.to.x - line.from.x;
+    let dy = line.to.y - line.from.y;
+    dx * dx + dy * dy
+}
+
+fn bump(value: *s32) {
+    *value += 1;
+}
+
+fn sum(values: s32[?], count: usize) -> s32 {
+    let total = 0;
+    for (let i: usize = 0; i < count; i++) {
+        total += values[i];
+    }
+    total
+}
+
+fn main() -> s32 {
+    // `@` is the array being initialized
+    let greeting: u8[32]{0} = {
+        strcat(@, "Hello");
+        strcat(@, ", there");
+        @
+    };
+    printf("%s\n", greeting);
+
+    // Arrays are values
+    let grid: s32[2][3]{1};
+    grid[1][2] = 5;
+    let copy = grid;
+    copy[0][0] = 9;
+    printf("%d %d %d\n", grid[0][0], copy[0][0], grid[1][2]);
+
+    // Passed where the size is unknown, an array is a pointer to it
+    let numbers: s32[4]{0};
+    for (let i: usize = 0; i < 4; i++) {
+        numbers[i] = (i * 10) as s32;
+    }
+    printf("%d\n", sum(numbers, 4));
+
+    // Structs, references and pointers
+    let line = Line { from: Point { x: 1, y: 2 }, to: Point { x: 4, y: 6 } };
+    printf("%d\n", length_squared(&line));
+    let moved = line;
+    moved.to.x = 0;
+    printf("%d %d\n", line.to.x, moved.to.x);
+
+    let n = 41;
+    bump(&n);
+    printf("%d\n", n);
+
+    counter += 1;
+    printf("%d %d %d %u %d\n", origin.x, counter, computed, table[3], table[0] + 1);
+    0
+}

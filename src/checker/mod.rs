@@ -7,6 +7,7 @@ mod builtins;
 mod errors;
 mod types;
 
+pub use builtins::BuiltinFunction;
 pub use errors::*;
 pub use types::{IntType, Type};
 
@@ -22,14 +23,20 @@ use crate::parser::{
     TypeInfo, UnaryOperator, VariantFields,
 };
 
-#[derive(Debug, Clone)]
-struct StructDef {
-    name: String,
-    fields: Vec<(String, Type)>,
-}
+/// Where an item was declared, for naming it in generated code: the names of
+/// its enclosing functions, then a `$N` segment if an item of the same name
+/// was already declared in the same function.
+pub type ItemPath = Vec<String>;
 
 #[derive(Debug, Clone)]
-enum VariantShape {
+pub struct StructDef {
+    pub name: String,
+    pub path: ItemPath,
+    pub fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VariantShape {
     Unit,
     Tuple(Vec<Type>),
     Struct(Vec<(String, Type)>),
@@ -46,15 +53,89 @@ impl VariantShape {
 }
 
 #[derive(Debug, Clone)]
-struct EnumDef {
-    name: String,
-    variants: Vec<(String, VariantShape)>,
+pub struct EnumDef {
+    pub name: String,
+    pub path: ItemPath,
+    pub backing_type: Option<Type>,
+    pub variants: Vec<(String, VariantShape)>,
+    /// Each variant's value: its `= value`, or one more than the previous
+    /// variant's (starting at 0), as in C.
+    pub discriminants: Vec<BigInt>,
+}
+
+impl EnumDef {
+    /// Whether any variant carries fields. If none do, the enum is just its
+    /// backing integer.
+    pub fn has_data(&self) -> bool {
+        self.variants
+            .iter()
+            .any(|(_, shape)| *shape != VariantShape::Unit)
+    }
 }
 
 #[derive(Debug, Clone)]
-struct FunctionDef {
-    params: Vec<Type>,
-    return_type: Option<Type>,
+pub struct FunctionDef {
+    pub name: String,
+    pub path: ItemPath,
+    pub params: Vec<Type>,
+    /// The variables holding the parameters inside the body.
+    pub param_variables: Vec<usize>,
+    pub return_type: Option<Type>,
+    /// The id of the declaring expression.
+    pub declaration: usize,
+}
+
+impl FunctionDef {
+    /// The item type, if this is a generator.
+    pub fn yield_type(&self) -> Option<&Type> {
+        match &self.return_type {
+            Some(Type::Iterator(item)) => Some(item),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VariableInfo {
+    pub name: String,
+    pub ty: Type,
+    pub constant: bool,
+    /// Declared at the top level, outside any function.
+    pub global: bool,
+}
+
+/// What a name in an expression or pattern refers to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resolution {
+    Variable(usize),
+    Function(usize),
+    Builtin(BuiltinFunction),
+    Variant { enum_id: usize, index: usize },
+    Struct(usize),
+}
+
+/// What the checker learned about a program that passed, keyed by the ids
+/// of expressions and patterns, for code generation.
+#[derive(Debug, Clone, Default)]
+pub struct CheckedProgram {
+    /// The type of every expression. Untyped literals stay untyped here; the
+    /// type they take comes from where they're used.
+    pub types: HashMap<usize, Type>,
+    /// For binary operators and compound assignments, the type both operands
+    /// are converted to before the operation.
+    pub operand_types: HashMap<usize, Type>,
+    /// For identifiers, callees, struct literals, assignment targets and
+    /// variant patterns.
+    pub resolutions: HashMap<usize, Resolution>,
+    /// The variable declared by a `let`, a `for x in` loop or a binding
+    /// pattern.
+    pub declarations: HashMap<usize, usize>,
+    /// The variable each `@` refers to.
+    pub at_targets: HashMap<usize, usize>,
+    pub variables: Vec<VariableInfo>,
+    pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
+    pub functions: Vec<FunctionDef>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,8 +151,7 @@ struct Variable {
 enum Symbol {
     Variable(Variable),
     Function(usize),
-    /// A function from a built-in module, whose signature isn't known yet.
-    BuiltinFunction,
+    BuiltinFunction(BuiltinFunction),
     Struct(usize),
     Enum(usize),
     Primitive(Type),
@@ -80,7 +160,7 @@ enum Symbol {
 impl From<BuiltinMember> for Symbol {
     fn from(member: BuiltinMember) -> Self {
         match member {
-            BuiltinMember::Function => Symbol::BuiltinFunction,
+            BuiltinMember::Function(function) => Symbol::BuiltinFunction(function),
             BuiltinMember::Type(ty) => Symbol::Primitive(ty),
         }
     }
@@ -92,6 +172,7 @@ enum Resolved {
     Variant {
         path: String,
         enum_id: usize,
+        index: usize,
         shape: VariantShape,
     },
 }
@@ -133,8 +214,9 @@ struct FunctionContext {
 struct Context {
     function: Option<FunctionContext>,
     frames: Vec<Frame>,
-    /// The declared types of the enclosing `let`s being initialized, for `@`.
-    initializers: Vec<Option<Type>>,
+    /// The declared types and variables of the enclosing `let`s being
+    /// initialized, for `@`.
+    initializers: Vec<(Option<Type>, usize)>,
 }
 
 pub struct Checker {
@@ -142,12 +224,13 @@ pub struct Checker {
     scopes: Vec<HashMap<String, Symbol>>,
     context: Context,
     assigned: Assigned,
-    structs: Vec<StructDef>,
-    enums: Vec<EnumDef>,
-    functions: Vec<FunctionDef>,
-    /// Function ids by the first token index of their declaration.
+    program: CheckedProgram,
+    /// Function ids by the id of their declaring expression.
     function_ids: HashMap<usize, usize>,
-    next_variable: usize,
+    /// The path of the function being checked, including its own name.
+    function_path: ItemPath,
+    /// How many items of each name have been declared at each path.
+    item_counts: HashMap<ItemPath, usize>,
     errors: Vec<CheckError>,
 }
 
@@ -166,16 +249,15 @@ impl Checker {
             scopes: vec![prelude],
             context: Context::default(),
             assigned: Some(HashSet::new()),
-            structs: Vec::new(),
-            enums: Vec::new(),
-            functions: Vec::new(),
+            program: CheckedProgram::default(),
             function_ids: HashMap::new(),
-            next_variable: 0,
+            function_path: Vec::new(),
+            item_counts: HashMap::new(),
             errors: Vec::new(),
         }
     }
 
-    pub fn check(&mut self, ast: &Ast) -> Result<(), Vec<CheckError>> {
+    pub fn check(&mut self, ast: &Ast) -> Result<CheckedProgram, Vec<CheckError>> {
         let filename = self.filename.take();
         *self = Self::new(filename.as_deref());
 
@@ -193,7 +275,7 @@ impl Checker {
         if !self.errors.is_empty() {
             return Err(std::mem::take(&mut self.errors));
         }
-        Ok(())
+        Ok(std::mem::take(&mut self.program))
     }
 
     // -------------------------------------------------------------------------
@@ -243,6 +325,20 @@ impl Checker {
             .map_or(0, |function| function.depth)
     }
 
+    /// The path for an item called `name` declared in the current function.
+    fn item_path(&mut self, name: &str) -> ItemPath {
+        let mut key = self.function_path.clone();
+        key.push(name.to_owned());
+        let count = self.item_counts.entry(key).or_insert(0);
+        *count += 1;
+
+        let mut path = self.function_path.clone();
+        if *count > 1 {
+            path.push(format!("${count}"));
+        }
+        path
+    }
+
     /// Declares the functions, structs, enums and imports among `items` up
     /// front, so they can be used before the point where they're declared.
     /// Names are declared first, so declarations can refer to each other.
@@ -255,29 +351,40 @@ impl Checker {
             let position = item.position;
             match &item.kind {
                 ExpressionKind::FunctionDeclarationExpression { name, .. } => {
-                    let id = self.functions.len();
-                    self.functions.push(FunctionDef {
+                    let id = self.program.functions.len();
+                    let path = self.item_path(name);
+                    self.program.functions.push(FunctionDef {
+                        name: name.clone(),
+                        path,
                         params: Vec::new(),
+                        param_variables: Vec::new(),
                         return_type: None,
+                        declaration: item.id,
                     });
-                    self.function_ids.insert(item.tokens.start, id);
+                    self.function_ids.insert(item.id, id);
                     self.declare(name, Symbol::Function(id), position);
                     functions.push((item, id));
                 }
                 ExpressionKind::StructDeclarationExpression { name, .. } => {
-                    let id = self.structs.len();
-                    self.structs.push(StructDef {
+                    let id = self.program.structs.len();
+                    let path = self.item_path(name);
+                    self.program.structs.push(StructDef {
                         name: name.clone(),
+                        path,
                         fields: Vec::new(),
                     });
                     self.declare(name, Symbol::Struct(id), position);
                     structs.push((item, id));
                 }
                 ExpressionKind::EnumDeclarationExpression { name, .. } => {
-                    let id = self.enums.len();
-                    self.enums.push(EnumDef {
+                    let id = self.program.enums.len();
+                    let path = self.item_path(name);
+                    self.program.enums.push(EnumDef {
                         name: name.clone(),
+                        path,
+                        backing_type: None,
                         variants: Vec::new(),
+                        discriminants: Vec::new(),
                     });
                     self.declare(name, Symbol::Enum(id), position);
                     enums.push((item, id));
@@ -291,7 +398,7 @@ impl Checker {
 
         for (item, id) in structs {
             if let ExpressionKind::StructDeclarationExpression { fields, .. } = &item.kind {
-                self.structs[id].fields = self.resolve_fields(fields, item.position);
+                self.program.structs[id].fields = self.resolve_fields(fields, item.position);
             }
         }
 
@@ -320,10 +427,9 @@ impl Checker {
                 let return_type = return_type
                     .as_ref()
                     .map(|return_type| self.resolve_type(return_type, item.position));
-                self.functions[id] = FunctionDef {
-                    params,
-                    return_type,
-                };
+                let function = &mut self.program.functions[id];
+                function.params = params;
+                function.return_type = return_type;
             }
         }
     }
@@ -346,6 +452,8 @@ impl Checker {
 
         let mut seen = HashSet::new();
         let mut shapes = Vec::new();
+        let mut discriminants = Vec::new();
+        let mut next = BigInt::from(0);
 
         for variant in variants {
             if !seen.insert(variant.name.as_str()) {
@@ -375,10 +483,23 @@ impl Checker {
                     }
                     None => {}
                 }
+
+                match constant_integer(value) {
+                    Some(constant) => next = constant,
+                    None if found.is_integer() => {
+                        self.error(CheckErrorKind::NotConstant, value.position);
+                    }
+                    None => {}
+                }
             }
+            discriminants.push(next.clone());
+            next += 1;
         }
 
-        self.enums[id].variants = shapes;
+        self.program.enums[id].discriminants = discriminants;
+
+        self.program.enums[id].backing_type = backing;
+        self.program.enums[id].variants = shapes;
     }
 
     fn declare_import(&mut self, module: &[String], imports: &[String], position: Location) {
@@ -429,16 +550,16 @@ impl Checker {
             },
             [container, member] => match self.lookup(container) {
                 Some(Symbol::Enum(enum_id)) => {
-                    let variant = self.enums[enum_id]
+                    let variant = self.program.enums[enum_id]
                         .variants
                         .iter()
-                        .find(|(name, _)| name == member)
-                        .map(|(_, shape)| shape.clone());
+                        .position(|(name, _)| name == member);
                     match variant {
-                        Some(shape) => Some(Resolved::Variant {
+                        Some(index) => Some(Resolved::Variant {
                             path: path.to_owned(),
                             enum_id,
-                            shape,
+                            index,
+                            shape: self.program.enums[enum_id].variants[index].1.clone(),
                         }),
                         None => {
                             self.unknown_member(container, member, position);
@@ -554,8 +675,8 @@ impl Checker {
             Type::Bool => "bool".to_owned(),
             Type::UntypedInt(_) => "integer".to_owned(),
             Type::UntypedFloat => "float".to_owned(),
-            Type::Struct(id) => self.structs[*id].name.clone(),
-            Type::Enum(id) => self.enums[*id].name.clone(),
+            Type::Struct(id) => self.program.structs[*id].name.clone(),
+            Type::Enum(id) => self.program.enums[*id].name.clone(),
             Type::Pointer(pointee) => format!("*{}", self.type_name(pointee)),
             Type::Reference(referent) => format!("&{}", self.type_name(referent)),
             Type::Iterator(item) => format!("iter {}", self.type_name(item)),
@@ -657,10 +778,7 @@ impl Checker {
         }
         match (from, to) {
             (Type::Bool, Type::Int(_)) => true,
-            (Type::Enum(id), Type::Int(_)) => self.enums[*id]
-                .variants
-                .iter()
-                .all(|(_, shape)| matches!(shape, VariantShape::Unit)),
+            (Type::Enum(id), Type::Int(_)) => !self.program.enums[*id].has_data(),
             (Type::Pointer(_) | Type::Reference(_), Type::Pointer(_)) => true,
             (Type::Pointer(_), Type::Int(int)) | (Type::Int(int), Type::Pointer(_)) => {
                 int.pointer_sized
@@ -694,6 +812,31 @@ impl Checker {
     // Variables and flow
     // -------------------------------------------------------------------------
 
+    /// Creates a variable without making its name visible yet.
+    fn new_variable(&mut self, name: &str, ty: Type, constant: bool) -> usize {
+        let id = self.program.variables.len();
+        self.program.variables.push(VariableInfo {
+            name: name.to_owned(),
+            ty,
+            constant,
+            global: self.function_depth() == 0,
+        });
+        id
+    }
+
+    /// Makes variable `id` visible in the current scope.
+    fn bind_variable(&mut self, id: usize, position: Location) {
+        let info = &self.program.variables[id];
+        let name = info.name.clone();
+        let variable = Variable {
+            id,
+            ty: info.ty.clone(),
+            constant: info.constant,
+            depth: self.function_depth(),
+        };
+        self.declare(&name, Symbol::Variable(variable), position);
+    }
+
     fn declare_variable(
         &mut self,
         name: &str,
@@ -701,21 +844,13 @@ impl Checker {
         constant: bool,
         assigned: bool,
         position: Location,
-    ) {
-        let id = self.next_variable;
-        self.next_variable += 1;
-
-        let variable = Variable {
-            id,
-            ty,
-            constant,
-            depth: self.function_depth(),
-        };
-        self.declare(name, Symbol::Variable(variable), position);
-
+    ) -> usize {
+        let id = self.new_variable(name, ty, constant);
+        self.bind_variable(id, position);
         if assigned {
             self.mark_assigned(id);
         }
+        id
     }
 
     fn mark_assigned(&mut self, id: usize) {
@@ -787,8 +922,16 @@ impl Checker {
         }
     }
 
+    /// Checks `expression` and records its type.
     fn check_expression(&mut self, expression: &Expression) -> Type {
+        let ty = self.check_expression_kind(expression);
+        self.program.types.insert(expression.id, ty.clone());
+        ty
+    }
+
+    fn check_expression_kind(&mut self, expression: &Expression) -> Type {
         let position = expression.position;
+        let id = expression.id;
 
         match &expression.kind {
             // Declared up front by `declare_items`
@@ -835,23 +978,28 @@ impl Checker {
                 }
             }
             ExpressionKind::BooleanLiteralExpression { .. } => Type::Bool,
-            ExpressionKind::IdentifierExpression { name } => self.check_value_path(name, position),
-            ExpressionKind::AtExpression => match self.context.initializers.last() {
+            ExpressionKind::IdentifierExpression { name } => {
+                self.check_value_path(name, id, position)
+            }
+            ExpressionKind::AtExpression => match self.context.initializers.last().cloned() {
                 None => {
                     self.misplaced(Construct::At, position);
                     Type::Unknown
                 }
-                Some(None) => {
+                Some((None, _)) => {
                     self.error(CheckErrorKind::AtNeedsType, position);
                     Type::Unknown
                 }
-                Some(Some(ty)) => ty.clone(),
+                Some((Some(ty), variable)) => {
+                    self.program.at_targets.insert(id, variable);
+                    ty
+                }
             },
             ExpressionKind::FunctionDeclarationExpression {
                 name, params, body, ..
             } => {
-                if let Some(&id) = self.function_ids.get(&expression.tokens.start) {
-                    self.check_function(id, name, params, body, position);
+                if let Some(&function) = self.function_ids.get(&id) {
+                    self.check_function(function, name, params, body, position);
                 }
                 Type::Void
             }
@@ -866,20 +1014,31 @@ impl Checker {
                     name,
                     typeinfo.as_ref(),
                     value.as_deref(),
+                    id,
                     position,
                 );
                 Type::Void
             }
             ExpressionKind::StructLiteralExpression { name, fields } => {
                 let (expected, ty) = match self.resolve_path(name, position) {
-                    Some(Resolved::Symbol(Symbol::Struct(id))) => {
-                        (Some(self.structs[id].fields.clone()), Type::Struct(id))
+                    Some(Resolved::Symbol(Symbol::Struct(struct_id))) => {
+                        self.program
+                            .resolutions
+                            .insert(id, Resolution::Struct(struct_id));
+                        let fields = self.program.structs[struct_id].fields.clone();
+                        (Some(fields), Type::Struct(struct_id))
                     }
                     Some(Resolved::Variant {
                         enum_id,
+                        index,
                         shape: VariantShape::Struct(fields),
                         ..
-                    }) => (Some(fields), Type::Enum(enum_id)),
+                    }) => {
+                        self.program
+                            .resolutions
+                            .insert(id, Resolution::Variant { enum_id, index });
+                        (Some(fields), Type::Enum(enum_id))
+                    }
                     Some(Resolved::Variant { path, shape, .. }) => {
                         let style = shape.style();
                         self.error(CheckErrorKind::VariantStyle { path, style }, position);
@@ -935,8 +1094,8 @@ impl Checker {
                             *operator,
                             &target_type,
                             &value_type,
-                            target.position,
-                            value.position,
+                            id,
+                            (target.position, value.position),
                             position,
                         );
                         self.coerce(&result, &target_type, value.position);
@@ -973,8 +1132,8 @@ impl Checker {
                     *operator,
                     &left_type,
                     &right_type,
-                    left.position,
-                    right.position,
+                    id,
+                    (left.position, right.position),
                     position,
                 )
             }
@@ -1005,7 +1164,7 @@ impl Checker {
             ExpressionKind::MemberExpression { target, member } => {
                 let target_type = strip_references(self.check_expression(target));
                 let field = match &target_type {
-                    Type::Struct(id) => self.structs[*id]
+                    Type::Struct(struct_id) => self.program.structs[*struct_id]
                         .fields
                         .iter()
                         .find(|(name, _)| name == member)
@@ -1112,7 +1271,8 @@ impl Checker {
                 // The body may not run at all
                 let before = self.assigned.clone();
                 self.with_scope(|checker| {
-                    checker.declare_variable(binding, item, false, true, position);
+                    let variable = checker.declare_variable(binding, item, false, true, position);
+                    checker.program.declarations.insert(id, variable);
                     checker.push_frame(true);
                     checker.check_block_contents(body);
                     checker.pop_frame();
@@ -1244,9 +1404,14 @@ impl Checker {
         name: &str,
         typeinfo: Option<&TypeInfo>,
         value: Option<&Expression>,
+        id: usize,
         position: Location,
     ) {
         let declared = typeinfo.map(|typeinfo| self.resolve_type(typeinfo, position));
+        // Created before the value is checked so `@` can refer to it, but only
+        // visible by name afterwards
+        let variable = self.new_variable(name, Type::Unknown, constant);
+        self.program.declarations.insert(id, variable);
         // `let a: u8[4]{0};` is filled by its type's initializer
         let initialized = matches!(
             typeinfo,
@@ -1258,7 +1423,7 @@ impl Checker {
 
         let ty = match value {
             Some(value) => {
-                self.context.initializers.push(declared.clone());
+                self.context.initializers.push((declared.clone(), variable));
                 let found = self.check_expression(value);
                 self.context.initializers.pop();
 
@@ -1291,18 +1456,24 @@ impl Checker {
             }
         };
 
-        let assigned = value.is_some() || initialized;
-        self.declare_variable(name, ty, constant, assigned, position);
+        self.program.variables[variable].ty = ty;
+        self.bind_variable(variable, position);
+        if value.is_some() || initialized {
+            self.mark_assigned(variable);
+        }
     }
 
     /// A name used as a value: it must be a variable, a constant or a field-less
     /// enum variant.
-    fn check_value_path(&mut self, name: &str, position: Location) -> Type {
+    fn check_value_path(&mut self, name: &str, id: usize, position: Location) -> Type {
         match self.resolve_path(name, position) {
             Some(Resolved::Symbol(Symbol::Variable(variable))) => {
+                self.program
+                    .resolutions
+                    .insert(id, Resolution::Variable(variable.id));
                 self.read_variable(name, &variable, position)
             }
-            Some(Resolved::Symbol(Symbol::Function(_) | Symbol::BuiltinFunction)) => {
+            Some(Resolved::Symbol(Symbol::Function(_) | Symbol::BuiltinFunction(_))) => {
                 self.error(CheckErrorKind::FunctionAsValue(name.to_owned()), position);
                 Type::Unknown
             }
@@ -1312,9 +1483,15 @@ impl Checker {
             }
             Some(Resolved::Variant {
                 enum_id,
+                index,
                 shape: VariantShape::Unit,
                 ..
-            }) => Type::Enum(enum_id),
+            }) => {
+                self.program
+                    .resolutions
+                    .insert(id, Resolution::Variant { enum_id, index });
+                Type::Enum(enum_id)
+            }
             Some(Resolved::Variant { path, shape, .. }) => {
                 let style = shape.style();
                 self.error(CheckErrorKind::VariantStyle { path, style }, position);
@@ -1332,6 +1509,9 @@ impl Checker {
             ExpressionKind::IdentifierExpression { name } => {
                 match self.resolve_path(name, target.position) {
                     Some(Resolved::Symbol(Symbol::Variable(variable))) => {
+                        self.program
+                            .resolutions
+                            .insert(target.id, Resolution::Variable(variable.id));
                         if variable.constant {
                             self.error(
                                 CheckErrorKind::AssignToConstant(name.clone()),
@@ -1371,8 +1551,8 @@ impl Checker {
         operator: BinaryOperator,
         left: &Type,
         right: &Type,
-        left_position: Location,
-        right_position: Location,
+        id: usize,
+        (left_position, right_position): (Location, Location),
         position: Location,
     ) -> Type {
         use BinaryOperator as B;
@@ -1389,26 +1569,29 @@ impl Checker {
             };
         }
 
-        let valid = match operator {
+        // The type both operands are converted to
+        let operands = match operator {
             B::LogicalAnd | B::LogicalOr => {
                 (*left == Type::Bool && *right == Type::Bool).then_some(Type::Bool)
             }
             B::Eq | B::Neq => {
                 if left.is_numeric() && right.is_numeric() {
                     self.unify_numeric(left, right, left_position, right_position)
-                        .map(|_| Type::Bool)
                 } else {
-                    let comparable = matches!(
-                        left,
-                        Type::Bool | Type::Enum(_) | Type::Pointer(_) | Type::Reference(_)
-                    );
-                    (comparable && left == right).then_some(Type::Bool)
+                    // Enums with data would need their fields compared too
+                    let comparable = match left {
+                        Type::Bool | Type::Pointer(_) | Type::Reference(_) => true,
+                        Type::Enum(enum_id) => !self.program.enums[*enum_id].has_data(),
+                        _ => false,
+                    };
+                    (comparable && left == right).then(|| left.clone())
                 }
             }
-            B::Lt | B::Gt | B::Le | B::Ge => self
-                .unify_numeric(left, right, left_position, right_position)
-                .map(|_| Type::Bool),
-            // The result has the left side's type, whatever the shift amount's
+            B::Lt | B::Gt | B::Le | B::Ge | B::Add | B::Sub | B::Mul | B::Div | B::Mod => {
+                self.unify_numeric(left, right, left_position, right_position)
+            }
+            // The shift amount keeps its own type; the result has the left
+            // side's
             B::Shl | B::Shr => (left.is_integer() && right.is_integer()).then(|| left.clone()),
             B::And | B::Or | B::Xor => {
                 if left.is_integer() && right.is_integer() {
@@ -1417,10 +1600,12 @@ impl Checker {
                     None
                 }
             }
-            B::Add | B::Sub | B::Mul | B::Div | B::Mod => {
-                self.unify_numeric(left, right, left_position, right_position)
-            }
         };
+
+        let valid = operands.map(|operands| {
+            self.program.operand_types.insert(id, operands.clone());
+            if comparison { Type::Bool } else { operands }
+        });
 
         valid.unwrap_or_else(|| {
             self.error(
@@ -1472,46 +1657,67 @@ impl Checker {
     }
 
     fn check_call(&mut self, callee: &Expression, args: &[Expression], position: Location) -> Type {
-        // What's called decides the parameter types (if known) and result
-        let (params, result) = match &callee.kind {
+        // What's called decides the parameter types (if known), whether more
+        // arguments may follow them, and the result
+        let (params, variadic, result) = match &callee.kind {
             ExpressionKind::IdentifierExpression { name } => {
                 match self.resolve_path(name, callee.position) {
-                    Some(Resolved::Symbol(Symbol::Function(id))) => {
-                        let function = self.functions[id].clone();
+                    Some(Resolved::Symbol(Symbol::Function(function_id))) => {
+                        self.program
+                            .resolutions
+                            .insert(callee.id, Resolution::Function(function_id));
+                        let function = self.program.functions[function_id].clone();
                         let result = function.return_type.unwrap_or(Type::Void);
-                        (Some((name.clone(), function.params)), result)
+                        (Some((name.clone(), function.params)), false, result)
+                    }
+                    Some(Resolved::Symbol(Symbol::BuiltinFunction(function))) => {
+                        self.program
+                            .resolutions
+                            .insert(callee.id, Resolution::Builtin(function.clone()));
+                        let result = function.return_type.unwrap_or(Type::Void);
+                        (
+                            Some((name.clone(), function.params)),
+                            function.variadic,
+                            result,
+                        )
                     }
                     Some(Resolved::Variant {
                         enum_id,
+                        index,
                         shape: VariantShape::Tuple(types),
                         ..
-                    }) => (Some((name.clone(), types)), Type::Enum(enum_id)),
+                    }) => {
+                        self.program
+                            .resolutions
+                            .insert(callee.id, Resolution::Variant { enum_id, index });
+                        (Some((name.clone(), types)), false, Type::Enum(enum_id))
+                    }
                     Some(Resolved::Variant { path, shape, .. }) => {
                         let style = shape.style();
                         self.error(
                             CheckErrorKind::VariantStyle { path, style },
                             callee.position,
                         );
-                        (None, Type::Unknown)
+                        (None, false, Type::Unknown)
                     }
                     Some(Resolved::Symbol(
                         Symbol::Struct(_) | Symbol::Enum(_) | Symbol::Primitive(_),
                     )) => {
                         self.error(CheckErrorKind::NotAValue(name.clone()), callee.position);
-                        (None, Type::Unknown)
+                        (None, false, Type::Unknown)
                     }
                     Some(Resolved::Symbol(Symbol::Variable(variable))) => {
                         let ty = self.read_variable(name, &variable, callee.position);
                         self.not_callable(&ty, callee.position);
-                        (None, Type::Unknown)
+                        (None, false, Type::Unknown)
                     }
-                    Some(Resolved::Symbol(Symbol::BuiltinFunction)) | None => (None, Type::Unknown),
+                    None => (None, false, Type::Unknown),
                 }
             }
             _ => {
                 let ty = self.check_expression(callee);
                 self.not_callable(&ty, callee.position);
-                (None, Type::Unknown)
+                (None, false, Type::Unknown)
             }
         };
 
@@ -1522,7 +1728,12 @@ impl Checker {
             return result;
         };
 
-        if params.len() != args.len() {
+        let count_ok = if variadic {
+            args.len() >= params.len()
+        } else {
+            args.len() == params.len()
+        };
+        if !count_ok {
             self.error(
                 CheckErrorKind::ArgumentCount {
                     name,
@@ -1537,12 +1748,35 @@ impl Checker {
             match params.get(index) {
                 Some(param) => self.check_coerced(arg, param),
                 None => {
-                    self.check_expression(arg);
+                    let ty = self.check_expression(arg);
+                    if variadic && !self.passable_to_c(&ty) {
+                        let name = self.type_name(&ty);
+                        self.error(CheckErrorKind::InvalidVariadicArgument(name), arg.position);
+                    }
                 }
             }
         }
 
         result
+    }
+
+    /// Whether a value of `ty` can be passed as one of a C function's extra
+    /// arguments: numbers, `bool`s and field-less enums (all promoted as in
+    /// C), pointers, and arrays (passed as a pointer to their first element).
+    fn passable_to_c(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Int(_)
+            | Type::Float(_)
+            | Type::Bool
+            | Type::UntypedInt(_)
+            | Type::UntypedFloat
+            | Type::Pointer(_)
+            | Type::Reference(_)
+            | Type::Array { .. }
+            | Type::Unknown => true,
+            Type::Enum(enum_id) => !self.program.enums[*enum_id].has_data(),
+            Type::Struct(_) | Type::Iterator(_) | Type::Void | Type::Never => false,
+        }
     }
 
     fn not_callable(&mut self, ty: &Type, position: Location) {
@@ -1610,11 +1844,8 @@ impl Checker {
         body: &Block,
         position: Location,
     ) {
-        let function = self.functions[id].clone();
-        let yield_type = match &function.return_type {
-            Some(Type::Iterator(item)) => Some((**item).clone()),
-            _ => None,
-        };
+        let function = self.program.functions[id].clone();
+        let yield_type = function.yield_type().cloned();
         let generator = yield_type.is_some();
 
         // A nested function can't `break` out of, `yield` for, or use the
@@ -1630,12 +1861,20 @@ impl Checker {
         };
         let outer_context = std::mem::replace(&mut self.context, context);
         let outer_assigned = self.assigned.replace(HashSet::new());
+        let mut path = function.path.clone();
+        path.push(name.to_owned());
+        let outer_path = std::mem::replace(&mut self.function_path, path);
 
         // Parameters share the body's scope, so the body can't redeclare them
         self.with_scope(|checker| {
-            for (param, ty) in params.iter().zip(&function.params) {
-                checker.declare_variable(&param.name, ty.clone(), false, true, position);
-            }
+            let variables = params
+                .iter()
+                .zip(&function.params)
+                .map(|(param, ty)| {
+                    checker.declare_variable(&param.name, ty.clone(), false, true, position)
+                })
+                .collect();
+            checker.program.functions[id].param_variables = variables;
 
             let result = checker.check_block_contents(body);
             let reachable_end = checker.assigned.is_some();
@@ -1660,6 +1899,7 @@ impl Checker {
 
         self.context = outer_context;
         self.assigned = outer_assigned;
+        self.function_path = outer_path;
     }
 
     fn check_return(&mut self, value: Option<&Expression>, position: Location) {
@@ -1729,8 +1969,9 @@ impl Checker {
                     );
                 }
 
-                for (name, ty, position) in bindings {
-                    checker.declare_variable(&name, ty, false, true, position);
+                for (name, ty, position, pattern) in bindings {
+                    let variable = checker.declare_variable(&name, ty, false, true, position);
+                    checker.program.declarations.insert(pattern, variable);
                 }
                 checker.check_block_contents(&case.body);
             });
@@ -1762,18 +2003,46 @@ impl Checker {
         &mut self,
         pattern: &Pattern,
         expected: &Type,
-        bindings: &mut Vec<(String, Type, Location)>,
+        bindings: &mut Vec<(String, Type, Location, usize)>,
     ) {
         let position = pattern.position;
 
         match &pattern.kind {
             PatternKind::WildcardPattern => {}
             PatternKind::BindingPattern { name } => {
-                bindings.push((name.clone(), expected.clone(), position));
+                bindings.push((name.clone(), expected.clone(), position, pattern.id));
             }
-            PatternKind::ValuePattern { value } => self.check_coerced(value, expected),
+            PatternKind::ValuePattern { value } => {
+                let found = self.check_expression(value);
+                self.coerce(&found, expected, value.position);
+                if found == Type::Unknown {
+                    return;
+                }
+
+                // Matching compares with `==`, so only values that can be
+                // compared that way, or an enum's field-less variants
+                let unit_variant = matches!(
+                    self.program.resolutions.get(&value.id),
+                    Some(Resolution::Variant { .. })
+                );
+                let comparable = match expected {
+                    Type::Int(_)
+                    | Type::Float(_)
+                    | Type::Bool
+                    | Type::Pointer(_)
+                    | Type::Reference(_)
+                    | Type::Unknown => true,
+                    Type::Enum(enum_id) => unit_variant || !self.program.enums[*enum_id].has_data(),
+                    _ => false,
+                };
+                if !comparable {
+                    let name = self.type_name(expected);
+                    self.error(CheckErrorKind::UnmatchableValue(name), position);
+                }
+            }
             PatternKind::TupleVariantPattern { path, elements } => {
-                let types = match self.resolve_variant_pattern(path, expected, position) {
+                let types = match self.resolve_variant_pattern(path, expected, pattern.id, position)
+                {
                     Some(VariantShape::Tuple(types)) => {
                         if types.len() != elements.len() {
                             self.error(
@@ -1802,16 +2071,17 @@ impl Checker {
                 }
             }
             PatternKind::StructVariantPattern { path, fields } => {
-                let expected_fields = match self.resolve_variant_pattern(path, expected, position) {
-                    Some(VariantShape::Struct(fields)) => Some(fields),
-                    Some(shape) => {
-                        let style = shape.style();
-                        let path = path.clone();
-                        self.error(CheckErrorKind::VariantStyle { path, style }, position);
-                        None
-                    }
-                    None => None,
-                };
+                let expected_fields =
+                    match self.resolve_variant_pattern(path, expected, pattern.id, position) {
+                        Some(VariantShape::Struct(fields)) => Some(fields),
+                        Some(shape) => {
+                            let style = shape.style();
+                            let path = path.clone();
+                            self.error(CheckErrorKind::VariantStyle { path, style }, position);
+                            None
+                        }
+                        None => None,
+                    };
 
                 // A pattern may leave fields out; those parts aren't matched
                 let given: Vec<_> = fields
@@ -1845,10 +2115,19 @@ impl Checker {
         &mut self,
         path: &str,
         expected: &Type,
+        id: usize,
         position: Location,
     ) -> Option<VariantShape> {
         match self.resolve_path(path, position)? {
-            Resolved::Variant { enum_id, shape, .. } => {
+            Resolved::Variant {
+                enum_id,
+                index,
+                shape,
+                ..
+            } => {
+                self.program
+                    .resolutions
+                    .insert(id, Resolution::Variant { enum_id, index });
                 let matches = match expected {
                     Type::Enum(id) => *id == enum_id,
                     Type::Unknown => true,
@@ -1870,6 +2149,42 @@ impl Checker {
                 None
             }
         }
+    }
+}
+
+/// The value of an integer expression made only of literals and operators,
+/// like `1 << 4`.
+fn constant_integer(expression: &Expression) -> Option<BigInt> {
+    match &expression.kind {
+        ExpressionKind::IntegerLiteralExpression { value, .. } => Some(BigInt::from(value.clone())),
+        ExpressionKind::UnaryExpression {
+            operator: UnaryOperator::Neg,
+            operand,
+        } => constant_integer(operand).map(|value| -value),
+        ExpressionKind::BinaryExpression {
+            operator,
+            left,
+            right,
+        } => {
+            let left = constant_integer(left)?;
+            let right = constant_integer(right)?;
+            let shift = || usize::try_from(&right).ok().filter(|&shift| shift < 128);
+            let zero = BigInt::from(0);
+            Some(match operator {
+                BinaryOperator::Add => left + right,
+                BinaryOperator::Sub => left - right,
+                BinaryOperator::Mul => left * right,
+                BinaryOperator::Div if right != zero => left / right,
+                BinaryOperator::Mod if right != zero => left % right,
+                BinaryOperator::Shl => left << shift()?,
+                BinaryOperator::Shr => left >> shift()?,
+                BinaryOperator::And => left & right,
+                BinaryOperator::Or => left | right,
+                BinaryOperator::Xor => left ^ right,
+                _ => return None,
+            })
+        }
+        _ => None,
     }
 }
 
