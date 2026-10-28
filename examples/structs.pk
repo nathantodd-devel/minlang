@@ -1,0 +1,94 @@
+import std::printf;
+
+struct Point {
+    x: f32,
+    y: f32,
+}
+
+struct Rect {
+    origin: Point,
+    size: Point,
+}
+
+// Variants count up from 0 unless given a value
+enum Direction {
+    North,
+    East,
+    South,
+    West,
+}
+
+// Variants can carry data, either positionally or with named fields
+enum Shape {
+    Circle(f32),
+    Rect { w: f32, h: f32 },
+    Empty,
+}
+
+// A backing type fixes the enum's size; values can be given explicitly
+enum Permission: u8 {
+    Read = 0b001,
+    Write = 0b010,
+    Execute = 0b100,
+}
+
+fn area(rect: &Rect) -> f32 {
+    rect.size.x * rect.size.y
+}
+
+// `case` patterns take variants apart; names inside them bind the data
+fn shape_area(shape: Shape) -> f32 {
+    switch shape {
+        case Shape::Circle(radius) {
+            return 3.14159f32 * radius * radius;
+        }
+        case Shape::Rect { w, h: height } {
+            return w * height;
+        }
+        default {
+            return 0.0f32;
+        }
+    }
+}
+
+fn step(position: Point, direction: Direction) -> Point {
+    switch direction {
+        case Direction::North {
+            return Point { x: position.x, y: position.y + 1.0f32 };
+        }
+        case Direction::South {
+            return Point { x: position.x, y: position.y - 1.0f32 };
+        }
+        case Direction::East {
+            return Point { x: position.x + 1.0f32, y: position.y };
+        }
+        default {
+            return Point { x: position.x - 1.0f32, y: position.y };
+        }
+    }
+}
+
+fn main(argc: s32, argv: u8[?][?], envp: u8[?][?]) -> s32 {
+    let origin = Point { x: 0.0f32, y: 0.0f32 };
+
+    let rect = Rect {
+        origin: origin,
+        size: Point { x: 4.0f32, y: 2.5f32 },
+    };
+    printf("area: %f\n", area(&rect));
+
+    let moved = step(rect.origin, Direction::North);
+    printf("moved to (%f, %f)\n", moved.x, moved.y);
+
+    let circle = Shape::Circle(2.0f32);
+    let square = Shape::Rect { w: 3.0f32, h: 3.0f32 };
+    printf("areas: %f %f\n", shape_area(circle), shape_area(square));
+
+    // Enums convert to their backing type with `as`
+    let permissions: u8 = Permission::Read as u8 | Permission::Write as u8;
+    if ((permissions & Permission::Write as u8) != 0) {
+        printf("writable\n");
+    }
+
+    0
+}

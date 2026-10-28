@@ -24,12 +24,14 @@ impl<K: fmt::Display> GenericError<K> {
         self.kind.to_string()
     }
 
+    /// `file:line:column: message`, with line and column counted from 1. The
+    /// fields themselves count from 0, like token positions.
     pub fn format(&self) -> String {
         format!(
             "{}:{}:{}: {}",
             self.file.as_deref().unwrap_or("stdin"),
-            self.line,
-            self.column,
+            self.line + 1,
+            self.column + 1,
             self.kind
         )
     }

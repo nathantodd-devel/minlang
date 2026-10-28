@@ -27,6 +27,9 @@ pub enum TokenKind {
         signed: bool,
         #[serde(serialize_with = "serialize_bigint")]
         value: BigUint,
+        /// Whether the literal had a size suffix like `u8`. Without one, `size`
+        /// and `signed` are the defaults and its type comes from context.
+        suffixed: bool,
     },
     Punctuation {
         symbol: Punctuation,
@@ -37,6 +40,8 @@ pub enum TokenKind {
     FloatLiteral {
         value: f64,
         size: FloatSize,
+        /// Whether the literal had a size suffix like `f32`.
+        suffixed: bool,
     },
     BooleanLiteral {
         value: bool,
@@ -143,6 +148,9 @@ string_enum!(Keyword {
     Do = "do",
     While = "while",
     Loop = "loop",
+    Yield = "yield",
+    Iter = "iter",
+    As = "as",
 });
 
 string_enum!(Punctuation {
@@ -178,6 +186,20 @@ string_enum!(Punctuation {
     Ge = ">=",
     Lt = "<",
     Gt = ">",
+    Shl = "<<",
+    Shr = ">>",
+    PlusAssign = "+=",
+    SubAssign = "-=",
+    MulAssign = "*=",
+    DivAssign = "/=",
+    ModAssign = "%=",
+    AndAssign = "&=",
+    OrAssign = "|=",
+    XorAssign = "^=",
+    ShlAssign = "<<=",
+    ShrAssign = ">>=",
+    Increment = "++",
+    Decrement = "--",
 });
 
 pub type TokenStream = Vec<Token>;

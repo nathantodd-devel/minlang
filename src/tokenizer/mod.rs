@@ -119,33 +119,20 @@ impl Tokenizer {
                 continue;
             }
 
-            let two = slice(source, col, (col + 2).min(source.len()));
-
-            if let Some(symbol) = Punctuation::ALL
-                .iter()
-                .copied()
-                .find(|value| value.as_str().len() == 2 && value.as_str() == two)
-            {
-                self.push(TokenKind::Punctuation { symbol }, line, col, two);
-
-                col += 2;
-                continue;
-            }
-
-            let punctuation = Punctuation::ALL.iter().copied().find(|value| {
-                let mut chars = value.as_str().chars();
-                chars.next() == Some(char) && chars.next().is_none()
+            // Longest match first, so `<<=` wins over `<<` and `<`
+            let punctuation = (1..=3).rev().find_map(|length| {
+                let raw = slice(source, col, (col + length).min(source.len()));
+                Punctuation::ALL
+                    .iter()
+                    .copied()
+                    .find(|value| value.as_str() == raw)
+                    .map(|symbol| (symbol, raw))
             });
 
-            if let Some(symbol) = punctuation {
-                self.push(
-                    TokenKind::Punctuation { symbol },
-                    line,
-                    col,
-                    char.to_string(),
-                );
-
-                col += 1;
+            if let Some((symbol, raw)) = punctuation {
+                let length = raw.len();
+                self.push(TokenKind::Punctuation { symbol }, line, col, raw);
+                col += length;
                 continue;
             }
 
@@ -298,7 +285,16 @@ impl Tokenizer {
                 }
             };
 
-            self.push(TokenKind::FloatLiteral { value, size }, line, start, raw);
+            self.push(
+                TokenKind::FloatLiteral {
+                    value,
+                    size,
+                    suffixed: !suffix.is_empty(),
+                },
+                line,
+                start,
+                raw,
+            );
 
             return col;
         }
@@ -351,6 +347,7 @@ impl Tokenizer {
                 size,
                 signed,
                 value,
+                suffixed: !suffix.is_empty(),
             },
             line,
             start,
@@ -424,6 +421,7 @@ impl Tokenizer {
                 size,
                 signed,
                 value,
+                suffixed: !suffix.is_empty(),
             },
             line,
             start,

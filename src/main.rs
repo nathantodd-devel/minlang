@@ -1,22 +1,25 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use minlang::{Parser, Tokenizer};
+use minlang::{Checker, Parser, Tokenizer};
 
 fn print_usage() {
     eprintln!("Usage: MEcc [options] <file>");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --ast    Parse the file and print the AST as JSON");
+    eprintln!("  --ast      Parse the file and print the AST as JSON");
+    eprintln!("  --check    Parse and check the file, reporting any errors");
 }
 
 fn main() -> ExitCode {
     let mut ast = false;
+    let mut check = false;
     let mut file = None;
 
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--ast" => ast = true,
+            "--check" => check = true,
             _ if arg.starts_with("--") || file.is_some() => {
                 print_usage();
                 return ExitCode::FAILURE;
@@ -55,7 +58,7 @@ fn main() -> ExitCode {
 
     eprintln!("Tokenization: {elapsed_ms:.3} ms");
 
-    if !ast {
+    if !ast && !check {
         println!(
             "{}",
             serde_json::to_string(&tokens).expect("tokens serialize to JSON")
@@ -68,19 +71,38 @@ fn main() -> ExitCode {
     let res = parser.parse();
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    match res {
-        Ok(node) => println!(
-            "{}",
-            serde_json::to_string(node).expect("AST serializes to JSON")
-        ),
+    let node = match res {
+        Ok(node) => node,
         Err(errors) => {
             for e in errors {
                 eprintln!("{}", e.format());
             }
             return ExitCode::FAILURE;
         }
-    }
+    };
     eprintln!("Parsing: {elapsed_ms:.3} ms");
+
+    if check {
+        let mut checker = Checker::new(Some(&file));
+        let start = Instant::now();
+        let res = checker.check(node);
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        if let Err(errors) = res {
+            for e in &errors {
+                eprintln!("{}", e.format());
+            }
+            return ExitCode::FAILURE;
+        }
+        eprintln!("Checking: {elapsed_ms:.3} ms");
+    }
+
+    if ast {
+        println!(
+            "{}",
+            serde_json::to_string(node).expect("AST serializes to JSON")
+        );
+    }
 
     ExitCode::SUCCESS
 }

@@ -14,19 +14,52 @@ fn assert_err(source: &str) {
 }
 
 fn assert_int(token: &Token, value: u64, base: u8, size: u8, signed: bool) {
+    let TokenKind::IntegerLiteral {
+        base: actual_base,
+        size: actual_size,
+        signed: actual_signed,
+        value: actual_value,
+        ..
+    } = &token.kind
+    else {
+        panic!("expected IntegerLiteral, got {:?}", token.kind);
+    };
     assert_eq!(
-        token.kind,
-        TokenKind::IntegerLiteral {
-            base,
-            size,
-            signed,
-            value: BigUint::from(value),
-        }
+        (*actual_base, *actual_size, *actual_signed, actual_value),
+        (base, size, signed, &BigUint::from(value))
     );
 }
 
 fn assert_float(token: &Token, value: f64, size: u8) {
-    assert_eq!(token.kind, TokenKind::FloatLiteral { value, size });
+    let TokenKind::FloatLiteral {
+        value: actual_value,
+        size: actual_size,
+        ..
+    } = token.kind
+    else {
+        panic!("expected FloatLiteral, got {:?}", token.kind);
+    };
+    assert_eq!((actual_value, actual_size), (value, size));
+}
+
+fn suffixed(source: &str) -> bool {
+    match ok(source)[0].kind {
+        TokenKind::IntegerLiteral { suffixed, .. } | TokenKind::FloatLiteral { suffixed, .. } => {
+            suffixed
+        }
+        ref other => panic!("expected a numeric literal, got {other:?}"),
+    }
+}
+
+#[test]
+fn literals_record_their_suffix() {
+    assert!(!suffixed("2"));
+    assert!(suffixed("2s32"));
+    assert!(!suffixed("0xff"));
+    assert!(suffixed("0xffu8"));
+    assert!(!suffixed("2.5"));
+    assert!(suffixed("2.5f64"));
+    assert!(suffixed("2f32"));
 }
 
 fn assert_int_value_size_signed(
@@ -330,4 +363,46 @@ fn loop_keywords() {
             TokenType::Identifier,
         ]
     );
+}
+
+#[test]
+fn generator_keywords() {
+    let tokens = ok("yield iter yielded iterate");
+    let kinds: Vec<_> = tokens.iter().map(|token| token.kind.token_type()).collect();
+    assert_eq!(
+        kinds,
+        [
+            TokenType::Keyword,
+            TokenType::Keyword,
+            TokenType::Identifier,
+            TokenType::Identifier,
+        ]
+    );
+}
+
+#[test]
+fn three_character_punctuation() {
+    let tokens = ok("<<= >>= << >> <= < += -= *= /= %= &= |= ^= ->");
+    let raws: Vec<_> = tokens.iter().map(|token| token.raw.as_str()).collect();
+    assert_eq!(
+        raws,
+        [
+            "<<=", ">>=", "<<", ">>", "<=", "<", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+            "->"
+        ]
+    );
+}
+
+#[test]
+fn punctuation_columns() {
+    let tokens = ok("a<<=b");
+    let columns: Vec<_> = tokens.iter().map(|token| token.col).collect();
+    assert_eq!(columns, [0, 1, 4]);
+}
+
+#[test]
+fn increment_and_decrement() {
+    let tokens = ok("i++ j-- a - -b -> c");
+    let raws: Vec<_> = tokens.iter().map(|token| token.raw.as_str()).collect();
+    assert_eq!(raws, ["i", "++", "j", "--", "a", "-", "-", "b", "->", "c"]);
 }

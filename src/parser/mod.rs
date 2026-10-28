@@ -6,6 +6,8 @@ pub use errors::*;
 pub use expression::*;
 pub use typeinfo::*;
 
+use std::ops::Range;
+
 use crate::tokenizer::{Keyword, Punctuation, Token, TokenKind, TokenStream};
 
 type ParseResult<T> = Result<T, ParserError>;
@@ -28,11 +30,35 @@ fn binary_operator(symbol: Punctuation) -> Option<(BinaryOperator, u8)> {
         P::Gt => (B::Gt, 7),
         P::Le => (B::Le, 7),
         P::Ge => (B::Ge, 7),
-        P::Plus => (B::Add, 8),
-        P::SubNeg => (B::Sub, 8),
-        P::Star => (B::Mul, 9),
-        P::Div => (B::Div, 9),
-        P::Mod => (B::Mod, 9),
+        P::Shl => (B::Shl, 8),
+        P::Shr => (B::Shr, 8),
+        P::Plus => (B::Add, 9),
+        P::SubNeg => (B::Sub, 9),
+        P::Star => (B::Mul, 10),
+        P::Div => (B::Div, 10),
+        P::Mod => (B::Mod, 10),
+        _ => return None,
+    })
+}
+
+/// `=` gives `Some(None)`; a compound assignment like `+=` gives the operator
+/// it applies.
+fn assignment_operator(symbol: Punctuation) -> Option<Option<BinaryOperator>> {
+    use BinaryOperator as B;
+    use Punctuation as P;
+
+    Some(match symbol {
+        P::Assign => None,
+        P::PlusAssign => Some(B::Add),
+        P::SubAssign => Some(B::Sub),
+        P::MulAssign => Some(B::Mul),
+        P::DivAssign => Some(B::Div),
+        P::ModAssign => Some(B::Mod),
+        P::AndAssign => Some(B::And),
+        P::OrAssign => Some(B::Or),
+        P::XorAssign => Some(B::Xor),
+        P::ShlAssign => Some(B::Shl),
+        P::ShrAssign => Some(B::Shr),
         _ => return None,
     })
 }
@@ -43,6 +69,9 @@ pub struct Parser {
     pub errors: Vec<ParserError>,
     pub node: Ast,
     filename: Option<String>,
+    /// Set while parsing an expression that is directly followed by a block,
+    /// such as an `if` condition, where `x {` must not start a struct literal.
+    no_struct_literal: bool,
 }
 
 impl Parser {
@@ -53,6 +82,7 @@ impl Parser {
             errors: Vec::new(),
             node: Vec::new(),
             filename: filename.map(str::to_owned),
+            no_struct_literal: false,
         }
     }
 
@@ -66,6 +96,8 @@ impl Parser {
                 continue;
             }
 
+            let start = self.position;
+
             match self.parse_statement() {
                 Ok(expression) => {
                     if self.eat(Punctuation::Semi) || expression.kind.is_block_like() {
@@ -73,12 +105,12 @@ impl Parser {
                     } else {
                         let error = self.unexpected("';'");
                         self.errors.push(error);
-                        self.recover(false);
+                        self.recover(false, start);
                     }
                 }
                 Err(error) => {
                     self.errors.push(error);
-                    self.recover(false);
+                    self.recover(false, start);
                 }
             }
         }
@@ -195,22 +227,39 @@ impl Parser {
         Ok(items)
     }
 
-    fn finish(&self, start: usize, kind: ExpressionKind) -> Expression {
+    /// The source location and token range from `start` up to the last
+    /// consumed token.
+    fn span(&self, start: usize) -> (Location, Range<usize>) {
         let first = &self.tokens[start];
         let last = &self.tokens[self.position - 1];
+        let position = Location {
+            start: Position {
+                line: first.line,
+                col: first.col,
+            },
+            end: Position {
+                line: last.line,
+                col: last.col + last.raw.chars().count(),
+            },
+        };
+        (position, start..self.position)
+    }
+
+    fn finish(&self, start: usize, kind: ExpressionKind) -> Expression {
+        let (position, tokens) = self.span(start);
         Expression {
             kind,
-            position: Location {
-                start: Position {
-                    line: first.line,
-                    col: first.col,
-                },
-                end: Position {
-                    line: last.line,
-                    col: last.col + last.raw.chars().count(),
-                },
-            },
-            tokens: start..self.position,
+            position,
+            tokens,
+        }
+    }
+
+    fn finish_pattern(&self, start: usize, kind: PatternKind) -> Pattern {
+        let (position, tokens) = self.span(start);
+        Pattern {
+            kind,
+            position,
+            tokens,
         }
     }
 
@@ -237,11 +286,25 @@ impl Parser {
         }
     }
 
-    /// Skips past the statement that failed to parse. Inside a block this stops
-    /// before the block's closing `}`; at the top level it also stops after
-    /// the `}` that closes a declaration's body.
-    fn recover(&mut self, in_block: bool) {
-        let mut depth = 0usize;
+    /// Skips past the statement starting at token `start` that failed to
+    /// parse. If the failure happened inside braces the statement opened (say,
+    /// in a `case` pattern), this skips to their matching `}`. Otherwise it
+    /// skips to the next `;`; inside a block it stops before the block's
+    /// closing `}`, and at the top level after the `}` that closes a
+    /// declaration's body.
+    fn recover(&mut self, in_block: bool, start: usize) {
+        let mut depth = self.tokens[start..self.position]
+            .iter()
+            .fold(0usize, |depth, token| match token.kind {
+                TokenKind::Punctuation {
+                    symbol: Punctuation::LBrace,
+                } => depth + 1,
+                TokenKind::Punctuation {
+                    symbol: Punctuation::RBrace,
+                } => depth.saturating_sub(1),
+                _ => depth,
+            });
+        let inside_statement_braces = depth > 0;
 
         while let Some(symbol) = self.peek_token().map(|_| self.peek_symbol()) {
             match symbol {
@@ -258,7 +321,7 @@ impl Parser {
                         return;
                     }
                     depth -= 1;
-                    if depth == 0 && !in_block {
+                    if depth == 0 && (inside_statement_braces || !in_block) {
                         self.position += 1;
                         return;
                     }
@@ -287,6 +350,7 @@ impl Parser {
                         | Keyword::Switch
                         | Keyword::For
                         | Keyword::Loop
+                        | Keyword::While
                         | Keyword::Do
                 )
             );
@@ -294,11 +358,68 @@ impl Parser {
         if block_like {
             self.parse_primary()
         } else {
-            self.parse_expression()
+            self.parse_simple_statement()
         }
     }
 
+    /// An expression, or `x++`/`x--`, which can only appear as statements.
+    fn parse_simple_statement(&mut self) -> ParseResult<Expression> {
+        let start = self.position;
+        let expression = self.parse_expression()?;
+
+        let is_place = matches!(
+            expression.kind,
+            ExpressionKind::IdentifierExpression { .. }
+                | ExpressionKind::IndexExpression { .. }
+                | ExpressionKind::MemberExpression { .. }
+                | ExpressionKind::UnaryExpression {
+                    operator: UnaryOperator::Deref,
+                    ..
+                }
+        );
+        if !is_place {
+            return Ok(expression);
+        }
+
+        let decrement = match self.peek_symbol() {
+            Some(Punctuation::Increment) => false,
+            Some(Punctuation::Decrement) => true,
+            _ => return Ok(expression),
+        };
+        self.position += 1;
+
+        Ok(self.finish(
+            start,
+            ExpressionKind::IncrementExpression {
+                target: Box::new(expression),
+                decrement,
+            },
+        ))
+    }
+
+    /// Runs `parse` with struct literals allowed or forbidden, restoring the
+    /// previous setting afterwards.
+    fn with_struct_literals<T>(
+        &mut self,
+        allowed: bool,
+        parse: impl FnOnce(&mut Self) -> ParseResult<T>,
+    ) -> ParseResult<T> {
+        let previous = std::mem::replace(&mut self.no_struct_literal, !allowed);
+        let result = parse(self);
+        self.no_struct_literal = previous;
+        result
+    }
+
+    /// Parses an expression that is directly followed by a block.
+    fn parse_condition(&mut self) -> ParseResult<Expression> {
+        self.with_struct_literals(false, Self::parse_expression)
+    }
+
     fn parse_block(&mut self) -> ParseResult<Block> {
+        self.with_struct_literals(true, Self::parse_block_contents)
+    }
+
+    fn parse_block_contents(&mut self) -> ParseResult<Block> {
         self.expect(Punctuation::LBrace)?;
 
         let mut body = Vec::new();
@@ -315,11 +436,13 @@ impl Parser {
                 continue;
             }
 
+            let start = self.position;
+
             let expression = match self.parse_statement() {
                 Ok(expression) => expression,
                 Err(error) => {
                     self.errors.push(error);
-                    self.recover(true);
+                    self.recover(true, start);
                     continue;
                 }
             };
@@ -334,7 +457,7 @@ impl Parser {
             } else {
                 let error = self.unexpected("';' or '}'");
                 self.errors.push(error);
-                self.recover(true);
+                self.recover(true, start);
             }
         }
 
@@ -349,11 +472,13 @@ impl Parser {
         let start = self.position;
         let target = self.parse_binary(1)?;
 
-        if self.eat(Punctuation::Assign) {
+        if let Some(operator) = self.peek_symbol().and_then(assignment_operator) {
+            self.position += 1;
             let value = self.parse_expression()?;
             return Ok(self.finish(
                 start,
                 ExpressionKind::AssignmentExpression {
+                    operator,
                     target: Box::new(target),
                     value: Box::new(value),
                 },
@@ -365,7 +490,7 @@ impl Parser {
 
     fn parse_binary(&mut self, min_precedence: u8) -> ParseResult<Expression> {
         let start = self.position;
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_cast()?;
 
         while let Some((operator, precedence)) = self.peek_symbol().and_then(binary_operator) {
             if precedence < min_precedence {
@@ -385,6 +510,26 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    /// `value as T`. Binds tighter than binary operators and looser than unary
+    /// ones, so `-x as u8` casts `-x` and `a + b as u8` casts only `b`.
+    fn parse_cast(&mut self) -> ParseResult<Expression> {
+        let start = self.position;
+        let mut expression = self.parse_unary()?;
+
+        while self.eat_keyword(Keyword::As) {
+            let typeinfo = self.parse_type(false)?;
+            expression = self.finish(
+                start,
+                ExpressionKind::CastExpression {
+                    value: Box::new(expression),
+                    typeinfo,
+                },
+            );
+        }
+
+        Ok(expression)
     }
 
     fn parse_unary(&mut self) -> ParseResult<Expression> {
@@ -421,13 +566,15 @@ impl Parser {
 
         loop {
             let kind = if self.eat(Punctuation::LParen) {
-                let args = self.parse_list(Punctuation::RParen, Self::parse_expression)?;
+                let args = self.with_struct_literals(true, |parser| {
+                    parser.parse_list(Punctuation::RParen, Self::parse_expression)
+                })?;
                 ExpressionKind::CallExpression {
                     callee: Box::new(expression),
                     args,
                 }
             } else if self.eat(Punctuation::LBracket) {
-                let index = self.parse_expression()?;
+                let index = self.with_struct_literals(true, Self::parse_expression)?;
                 self.expect(Punctuation::RBracket)?;
                 ExpressionKind::IndexExpression {
                     target: Box::new(expression),
@@ -457,9 +604,18 @@ impl Parser {
         };
 
         let kind = match token.kind.clone() {
-            TokenKind::Identifier { .. } => ExpressionKind::IdentifierExpression {
-                name: self.parse_path()?,
-            },
+            TokenKind::Identifier { .. } => {
+                let name = self.parse_path()?;
+
+                if !self.no_struct_literal && self.eat(Punctuation::LBrace) {
+                    let fields = self.with_struct_literals(true, |parser| {
+                        parser.parse_list(Punctuation::RBrace, Self::parse_field_init)
+                    })?;
+                    ExpressionKind::StructLiteralExpression { name, fields }
+                } else {
+                    ExpressionKind::IdentifierExpression { name }
+                }
+            }
             TokenKind::StringLiteral { value } => {
                 self.position += 1;
                 ExpressionKind::StringLiteralExpression { value }
@@ -469,6 +625,7 @@ impl Parser {
                 size,
                 signed,
                 value,
+                suffixed,
             } => {
                 self.position += 1;
                 ExpressionKind::IntegerLiteralExpression {
@@ -476,11 +633,20 @@ impl Parser {
                     size,
                     signed,
                     value,
+                    suffixed,
                 }
             }
-            TokenKind::FloatLiteral { value, size } => {
+            TokenKind::FloatLiteral {
+                value,
+                size,
+                suffixed,
+            } => {
                 self.position += 1;
-                ExpressionKind::FloatLiteralExpression { value, size }
+                ExpressionKind::FloatLiteralExpression {
+                    value,
+                    size,
+                    suffixed,
+                }
             }
             TokenKind::BooleanLiteral { value } => {
                 self.position += 1;
@@ -496,7 +662,7 @@ impl Parser {
                 symbol: Punctuation::LParen,
             } => {
                 self.position += 1;
-                let inner = self.parse_expression()?;
+                let inner = self.with_struct_literals(true, Self::parse_expression)?;
                 self.expect(Punctuation::RParen)?;
                 return Ok(inner);
             }
@@ -521,14 +687,22 @@ impl Parser {
                         body: self.parse_block()?,
                     },
                     Keyword::Do => self.parse_do()?,
+                    Keyword::While => ExpressionKind::WhileExpression {
+                        condition: Box::new(self.parse_condition()?),
+                        body: self.parse_block()?,
+                    },
                     Keyword::Return => self.parse_return()?,
+                    Keyword::Yield => ExpressionKind::YieldExpression {
+                        value: Box::new(self.parse_expression()?),
+                    },
                     Keyword::Break => ExpressionKind::BreakExpression,
                     Keyword::Continue => ExpressionKind::ContinueExpression,
                     Keyword::In
                     | Keyword::Case
                     | Keyword::Default
                     | Keyword::Else
-                    | Keyword::While => {
+                    | Keyword::Iter
+                    | Keyword::As => {
                         self.position -= 1;
                         return Err(self.unexpected("expression"));
                     }
@@ -633,17 +807,64 @@ impl Parser {
         Ok(ExpressionKind::StructDeclarationExpression { name, fields })
     }
 
-    /// `enum Name { A, B }`
+    fn parse_field_init(&mut self) -> ParseResult<FieldInit> {
+        let name = self.expect_identifier()?;
+        self.expect(Punctuation::Colon)?;
+        let value = self.parse_expression()?;
+        Ok(FieldInit { name, value })
+    }
+
+    /// `enum Name { A, B }` or `enum Name: u8 { A = 1, B }`
     fn parse_enum(&mut self) -> ParseResult<ExpressionKind> {
         let name = self.expect_identifier()?;
+
+        let backing_type = if self.eat(Punctuation::Colon) {
+            Some(self.parse_type(false)?)
+        } else {
+            None
+        };
+
         self.expect(Punctuation::LBrace)?;
-        let variants = self.parse_list(Punctuation::RBrace, Self::expect_identifier)?;
-        Ok(ExpressionKind::EnumDeclarationExpression { name, variants })
+        let variants = self.parse_list(Punctuation::RBrace, Self::parse_enum_variant)?;
+
+        Ok(ExpressionKind::EnumDeclarationExpression {
+            name,
+            backing_type,
+            variants,
+        })
+    }
+
+    fn parse_enum_variant(&mut self) -> ParseResult<EnumVariant> {
+        let name = self.expect_identifier()?;
+
+        let fields = if self.eat(Punctuation::LParen) {
+            VariantFields::Tuple {
+                types: self.parse_list(Punctuation::RParen, |parser| parser.parse_type(false))?,
+            }
+        } else if self.eat(Punctuation::LBrace) {
+            VariantFields::Struct {
+                fields: self.parse_list(Punctuation::RBrace, Self::parse_param)?,
+            }
+        } else {
+            VariantFields::Unit
+        };
+
+        let value = if self.eat(Punctuation::Assign) {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        Ok(EnumVariant {
+            name,
+            fields,
+            value,
+        })
     }
 
     /// `if (cond) { ... } else if (cond) { ... } else { ... }`
     fn parse_if(&mut self) -> ParseResult<ExpressionKind> {
-        let condition = Box::new(self.parse_expression()?);
+        let condition = Box::new(self.parse_condition()?);
         let then = self.parse_block()?;
 
         let otherwise = if self.eat_keyword(Keyword::Else) {
@@ -669,7 +890,7 @@ impl Parser {
 
     /// `switch (x) { case (a) { ... } default { ... } }`
     fn parse_switch(&mut self) -> ParseResult<ExpressionKind> {
-        let subject = Box::new(self.parse_expression()?);
+        let subject = Box::new(self.parse_condition()?);
         self.expect(Punctuation::LBrace)?;
 
         let mut cases = Vec::new();
@@ -677,9 +898,10 @@ impl Parser {
 
         while !self.eat(Punctuation::RBrace) {
             if self.eat_keyword(Keyword::Case) {
-                let value = self.parse_expression()?;
+                let pattern =
+                    self.with_struct_literals(false, |parser| parser.parse_pattern(false))?;
                 let body = self.parse_block()?;
-                cases.push(Case { value, body });
+                cases.push(Case { pattern, body });
             } else if self.eat_keyword(Keyword::Default) {
                 default = Some(self.parse_block()?);
             } else {
@@ -692,6 +914,102 @@ impl Parser {
             cases,
             default,
         })
+    }
+
+    // -------------------------------------------------------------------------
+    // Patterns
+    // -------------------------------------------------------------------------
+
+    /// `binds` is set inside variant patterns, where a bare name binds part of
+    /// the matched value rather than naming a constant to compare against.
+    fn parse_pattern(&mut self, binds: bool) -> ParseResult<Pattern> {
+        let start = self.position;
+        let kind = self.parse_pattern_kind(binds)?;
+        Ok(self.finish_pattern(start, kind))
+    }
+
+    fn parse_pattern_kind(&mut self, binds: bool) -> ParseResult<PatternKind> {
+        if self.eat(Punctuation::LParen) {
+            let inner = self.with_struct_literals(true, |parser| parser.parse_pattern(binds))?;
+            self.expect(Punctuation::RParen)?;
+            return Ok(inner.kind);
+        }
+
+        let Some(TokenKind::Identifier { name }) = self.peek_token().map(|token| &token.kind)
+        else {
+            return Ok(PatternKind::ValuePattern {
+                value: self.parse_expression()?,
+            });
+        };
+
+        if name == "_" {
+            self.position += 1;
+            return Ok(PatternKind::WildcardPattern);
+        }
+
+        let start = self.position;
+        let path = self.parse_path()?;
+
+        if self.eat(Punctuation::LParen) {
+            let elements = self.with_struct_literals(true, |parser| {
+                parser.parse_list(Punctuation::RParen, |parser| parser.parse_pattern(true))
+            })?;
+            return Ok(PatternKind::TupleVariantPattern { path, elements });
+        }
+
+        // At the top of a `case`, `Path {` may instead be the case body
+        if self.check(Punctuation::LBrace)
+            && (!self.no_struct_literal || self.brace_followed_by_block())
+        {
+            self.position += 1;
+            let fields = self.with_struct_literals(true, |parser| {
+                parser.parse_list(Punctuation::RBrace, Self::parse_field_pattern)
+            })?;
+            return Ok(PatternKind::StructVariantPattern { path, fields });
+        }
+
+        if binds && !path.contains("::") {
+            return Ok(PatternKind::BindingPattern { name: path });
+        }
+
+        // A constant, possibly part of a larger expression: `LIMIT + 1`
+        self.position = start;
+        Ok(PatternKind::ValuePattern {
+            value: self.parse_expression()?,
+        })
+    }
+
+    fn parse_field_pattern(&mut self) -> ParseResult<FieldPattern> {
+        let start = self.position;
+        let name = self.expect_identifier()?;
+
+        let pattern = if self.eat(Punctuation::Colon) {
+            self.parse_pattern(true)?
+        } else {
+            self.finish_pattern(start, PatternKind::BindingPattern { name: name.clone() })
+        };
+
+        Ok(FieldPattern { name, pattern })
+    }
+
+    /// With the current token a `{`, whether its matching `}` is directly
+    /// followed by another `{`.
+    fn brace_followed_by_block(&self) -> bool {
+        let is = |token: Option<&Token>, symbol| matches!(token, Some(Token { kind: TokenKind::Punctuation { symbol: s }, .. }) if *s == symbol);
+
+        let mut depth = 0usize;
+        for index in self.position..self.tokens.len() {
+            let token = self.tokens.get(index);
+            if is(token, Punctuation::LBrace) {
+                depth += 1;
+            } else if is(token, Punctuation::RBrace) {
+                depth -= 1;
+                if depth == 0 {
+                    return is(self.tokens.get(index + 1), Punctuation::LBrace);
+                }
+            }
+        }
+        false
     }
 
     /// `do { ... }` or `do { ... } while (cond)`
@@ -709,11 +1027,29 @@ impl Parser {
 
     /// `for x in xs { ... }` or `for (x in xs) { ... }`
     fn parse_for(&mut self) -> ParseResult<ExpressionKind> {
+        // `for (x in xs)` names a binding then `in`; anything else in
+        // parentheses is the clause form
+        let is_clause = self.check(Punctuation::LParen)
+            && !(matches!(
+                self.tokens.get(self.position + 1).map(|token| &token.kind),
+                Some(TokenKind::Identifier { .. })
+            ) && matches!(
+                self.tokens.get(self.position + 2).map(|token| &token.kind),
+                Some(TokenKind::Keyword {
+                    keyword: Keyword::In
+                })
+            ));
+
+        if is_clause {
+            self.position += 1;
+            return self.with_struct_literals(true, Self::parse_for_clauses);
+        }
+
         let parenthesized = self.eat(Punctuation::LParen);
 
         let binding = self.expect_identifier()?;
         self.expect_keyword(Keyword::In)?;
-        let iterable = Box::new(self.parse_expression()?);
+        let iterable = Box::new(self.parse_condition()?);
 
         if parenthesized {
             self.expect(Punctuation::RParen)?;
@@ -724,6 +1060,52 @@ impl Parser {
         Ok(ExpressionKind::ForExpression {
             binding,
             iterable,
+            body,
+        })
+    }
+
+    /// `for (init; condition; step; let item = ...) { ... }`, after the `(`.
+    fn parse_for_clauses(&mut self) -> ParseResult<ExpressionKind> {
+        let init = if self.check(Punctuation::Semi) {
+            None
+        } else {
+            Some(Box::new(self.parse_simple_statement()?))
+        };
+        self.expect(Punctuation::Semi)?;
+
+        let condition = if self.check(Punctuation::Semi) {
+            None
+        } else {
+            Some(Box::new(self.parse_expression()?))
+        };
+        self.expect(Punctuation::Semi)?;
+
+        let step = if matches!(
+            self.peek_symbol(),
+            Some(Punctuation::RParen | Punctuation::Semi)
+        ) {
+            None
+        } else {
+            Some(Box::new(self.parse_simple_statement()?))
+        };
+
+        let each = if self.eat(Punctuation::Semi) {
+            if self.peek_keyword() != Some(Keyword::Let) {
+                return Err(self.unexpected("'let'"));
+            }
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        self.expect(Punctuation::RParen)?;
+        let body = self.parse_block()?;
+
+        Ok(ExpressionKind::ForClauseExpression {
+            init,
+            condition,
+            step,
+            each,
             body,
         })
     }
@@ -748,17 +1130,22 @@ impl Parser {
     // Types
     // -------------------------------------------------------------------------
 
-    /// Prefix `*`/`&` bind tighter than array suffixes, so `*u8[4]` is an array
-    /// of four pointers; write `*(u8[4])` for a pointer to an array. An array
-    /// initializer (`u8[4]{0}`) is only accepted where `allow_initializer` is
-    /// set, since after a return type the `{` begins the function body.
+    /// Array dimensions read as in C: `u8[4][8]` is 4 elements of `u8[8]`, so
+    /// the leftmost suffix is the outermost array. Prefix `*`/`&` bind tighter
+    /// than array suffixes, so `*u8[4]` is an array of four pointers; write
+    /// `*(u8[4])` for a pointer to an array. An array initializer (`u8[4]{0}`)
+    /// is only accepted where `allow_initializer` is set, since after a return
+    /// type the `{` begins the function body.
     pub fn parse_type(&mut self, allow_initializer: bool) -> ParseResult<TypeInfo> {
         let mut typeinfo = self.parse_prefixed_type()?;
 
+        let mut sizes = Vec::new();
         while self.eat(Punctuation::LBracket) {
-            let size = self.parse_array_size()?;
+            sizes.push(self.parse_array_size()?);
             self.expect(Punctuation::RBracket)?;
+        }
 
+        for size in sizes.into_iter().rev() {
             typeinfo = TypeInfo::ArrayType {
                 element: Box::new(typeinfo),
                 size,
@@ -784,6 +1171,11 @@ impl Parser {
             referent: Box::new(referent),
         };
 
+        if self.eat_keyword(Keyword::Iter) {
+            return Ok(TypeInfo::IteratorType {
+                item: Box::new(self.parse_type(false)?),
+            });
+        }
         if self.eat(Punctuation::Star) {
             return Ok(pointer(self.parse_prefixed_type()?));
         }
