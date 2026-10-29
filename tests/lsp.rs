@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use minlang::lsp::analysis::{Analysis, CompletionKind, SymbolKind, TokenClass, analyze};
 use serde_json::{Value, json};
 
-const SOURCE: &str = "import std::printf;
+const SOURCE: &str = "import std::io::printf;
 
 struct Point {
     x: s32,
@@ -234,7 +234,12 @@ fn hover() {
     assert_eq!(hover("x: s32", "s32"), Some(code("s32 (built-in type)")));
     assert_eq!(
         hover("printf(\"", "printf"),
-        Some(code("fn printf(u8[?], ...) -> s32"))
+        Some(
+            code("extern \"C\" fn std::io::printf(format: u8[?], ...) -> s32")
+                + "\n\nPrints formatted text to standard output.\n\n\
+                   *@arg* `format` a format string like \"%d\\n\"\n\n\
+                   *@returns* the number of bytes written, or a negative number on error"
+        )
     );
     assert_eq!(
         hover("struct Point", "Point"),
@@ -332,7 +337,7 @@ fn completions() {
         analysis
             .completions(line, column)
             .iter()
-            .any(|c| c.label == "strcat")
+            .any(|c| c.label == "puts")
     );
 
     // Elsewhere: keywords, types, functions and the variables in scope
@@ -522,4 +527,27 @@ fn positions_use_utf16_unless_the_client_offers_utf32() {
         assert_eq!(*after, json!(column), "{capabilities}");
         client.finish();
     }
+}
+
+#[test]
+fn namespaces_in_the_outline() {
+    let analysis = analyze("namespace std::mem {\n    fn copy() {}\n}\n", None);
+    let symbols = analysis.symbols();
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].name, "std::mem");
+    assert_eq!(symbols[0].kind, SymbolKind::Namespace);
+    assert_eq!(symbols[0].children[0].name, "copy");
+
+    let source = "namespace std::mem {\n    fn copy() {}\n}\nfn f() { std::mem::copy(); }\n";
+    let analysis = analyze(source, None);
+    let call = find(source, "fn f", "std");
+    assert_eq!(
+        class_at(&analysis, call).map(|c| c.0),
+        Some(TokenClass::Namespace)
+    );
+    let name = find(source, "fn f", "copy");
+    assert_eq!(
+        class_at(&analysis, name).map(|c| c.0),
+        Some(TokenClass::Function)
+    );
 }

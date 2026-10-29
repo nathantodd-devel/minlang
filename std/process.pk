@@ -1,0 +1,48 @@
+//! Running, stopping and inspecting processes, and their environment (C's `stdlib.h` and `unistd.h`).
+
+namespace std::process {
+    /// Ends the program, flushing streams and running `atexit` handlers.
+    /// @arg {status} the exit code; 0 means success
+    pub extern "C" fn exit(status: s32);
+
+    /// Ends the program immediately, without flushing or cleaning up.
+    /// @arg {status} the exit code
+    pub extern "C" fn _Exit(status: s32);
+
+    /// Ends the program abnormally, with SIGABRT.
+    pub extern "C" fn abort();
+
+    /// Runs a shell command and waits for it.
+    /// @arg {command} a shell command, or null to check for a shell
+    /// @returns its wait status, or -1 on error
+    pub extern "C" fn system(command: u8[?]) -> s32;
+
+    /// Gets an environment variable.
+    /// @arg {name} the variable's name
+    /// @returns its value, or null if it isn't set
+    pub extern "C" fn getenv(name: u8[?]) -> u8[?];
+
+    /// Sets an environment variable.
+    /// @arg {name} the variable's name
+    /// @arg {value} its new value
+    /// @arg {overwrite} non-zero to replace an existing value
+    /// @returns 0, or -1 on error
+    pub extern "C" fn setenv(name: u8[?], value: u8[?], overwrite: s32) -> s32;
+
+    /// Removes an environment variable.
+    /// @arg {name} the variable's name
+    /// @returns 0, or -1 on error
+    pub extern "C" fn unsetenv(name: u8[?]) -> s32;
+
+    /// Gets this process's id.
+    /// @returns the process id
+    pub extern "C" fn getpid() -> s32;
+
+    /// Gets the parent process's id.
+    /// @returns the parent's process id
+    pub extern "C" fn getppid() -> s32;
+
+    /// Creates a copy of this process.
+    /// @returns 0 in the child, the child's id in the parent, or -1 on error
+    pub extern "C" fn fork() -> s32;
+}

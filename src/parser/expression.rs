@@ -44,6 +44,8 @@ pub struct Block {
 pub struct Param {
     pub name: String,
     pub r#type: TypeInfo,
+    /// The `///` comment above a struct field.
+    pub doc: Option<String>,
 }
 
 /// `name: value` inside a struct literal.
@@ -58,6 +60,7 @@ pub struct FieldInit {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EnumVariant {
     pub name: String,
+    pub doc: Option<String>,
     pub fields: VariantFields,
     pub value: Option<Expression>,
 }
@@ -158,8 +161,8 @@ pub enum UnaryOperator {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type")]
 pub enum ExpressionKind {
-    /// `import std::{printf, strcat}` → module `["std"]`, imports
-    /// `["printf", "strcat"]`. A glob import is `"*"`.
+    /// `import std::io::{printf, puts}` → module `["std", "io"]`, imports
+    /// `["printf", "puts"]`. A glob import is `"*"`.
     ImportExpression {
         module: Vec<String>,
         imports: Vec<String>,
@@ -189,24 +192,39 @@ pub enum ExpressionKind {
     BooleanLiteralExpression {
         value: bool,
     },
-    /// A name, possibly namespaced: `x`, `std::printf`.
+    /// A name, possibly namespaced: `x`, `std::io::printf`.
     IdentifierExpression {
         name: String,
     },
     /// `@`: the value currently being initialized.
     AtExpression,
     /// `fn`, `let`, `const`, `struct` and `enum` take `public` from a leading
-    /// `pub`, which lets other files import them.
+    /// `pub`, which lets other files import them, and `doc` from the `///`
+    /// comment lines directly above them, joined with newlines.
     FunctionDeclarationExpression {
         public: bool,
+        doc: Option<String>,
         name: String,
         params: Vec<Param>,
         return_type: Option<TypeInfo>,
         body: Block,
     },
+    /// `extern "C" fn name(a: T, ...) -> R;`: a function defined elsewhere,
+    /// called by its unmangled C name. `...` makes it variadic.
+    ExternFunctionDeclarationExpression {
+        public: bool,
+        doc: Option<String>,
+        /// The string after `extern`; only `"C"` is supported.
+        abi: String,
+        name: String,
+        params: Vec<Param>,
+        variadic: bool,
+        return_type: Option<TypeInfo>,
+    },
     /// `let x: T = v` or `const x: T = v`
     LetExpression {
         public: bool,
+        doc: Option<String>,
         constant: bool,
         name: String,
         typeinfo: Option<TypeInfo>,
@@ -214,6 +232,7 @@ pub enum ExpressionKind {
     },
     StructDeclarationExpression {
         public: bool,
+        doc: Option<String>,
         name: String,
         fields: Vec<Param>,
     },
@@ -221,9 +240,18 @@ pub enum ExpressionKind {
     /// optional.
     EnumDeclarationExpression {
         public: bool,
+        doc: Option<String>,
         name: String,
         backing_type: Option<TypeInfo>,
         variants: Vec<EnumVariant>,
+    },
+    /// `namespace std::mem { ... }`: declarations reached from outside as
+    /// `std::mem::name`. A namespace can be reopened, here or in another file,
+    /// and its declarations merge.
+    NamespaceExpression {
+        doc: Option<String>,
+        path: Vec<String>,
+        items: Vec<Expression>,
     },
     /// `Point { x: 1, y: 2 }`
     StructLiteralExpression {
@@ -335,6 +363,7 @@ impl ExpressionKind {
             Self::FunctionDeclarationExpression { .. }
                 | Self::StructDeclarationExpression { .. }
                 | Self::EnumDeclarationExpression { .. }
+                | Self::NamespaceExpression { .. }
                 | Self::BlockExpression { .. }
                 | Self::IfExpression { .. }
                 | Self::SwitchExpression { .. }

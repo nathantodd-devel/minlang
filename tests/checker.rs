@@ -139,7 +139,7 @@ fn only_declarations_at_top_level() {
     assert_eq!(
         check("fn f() {} f();"),
         [
-            "stdin:1:11: Only declarations (import, fn, struct, enum, let, const) are allowed at the top level"
+            "stdin:1:11: Only declarations (import, namespace, fn, struct, enum, let, const) are allowed at the top level"
         ]
     );
     ok("let a = 1; const B = 2;");
@@ -151,17 +151,19 @@ fn only_declarations_at_top_level() {
 
 #[test]
 fn imports() {
-    ok("import std::printf; fn f() { printf(\"hi\"); }");
+    ok("import std::io::printf; fn f() { printf(\"hi\"); }");
     ok(
-        "import std::{printf, strcat}; fn f() { let b: u8[8]{0}; strcat(b, \"x\"); printf(\"y\"); }",
+        "import std::io::printf; import std::str::strcat; fn f() { let b: u8[8]{0}; strcat(b, \"x\"); printf(\"y\"); }",
     );
-    ok("import std::{*}; fn f() { let b: u8[8]{0}; strcat(b, \"x\"); }");
+    ok("import std::str::*; fn f() { let b: u8[8]{0}; strcat(b, \"x\"); }");
+    // `import std;` and `import std::io;` name what's always visible
+    ok("import std; fn f() { std::io::puts(\"hi\"); }");
     ok("import types::*; fn f(a: u8) {}");
 }
 
 #[test]
 fn qualified_names_need_no_import() {
-    ok("fn f() { std::printf(\"hi\"); }");
+    ok("fn f() { std::io::printf(\"hi\"); }");
     ok("fn f(a: types::u8) {}");
 }
 
@@ -180,13 +182,23 @@ fn import_errors() {
         ["stdin:1:1: Unknown module 'nope': there's no file 'nope.pk' next to this one"]
     );
     assert_eq!(
-        check("import std::{printf, nope};"),
-        ["stdin:1:1: 'std' has no member 'nope'"]
+        check("import std::io::{printf, nope};"),
+        ["stdin:1:1: 'std::io' has no member 'nope'"]
+    );
+    assert_eq!(
+        check("import std::printf;"),
+        ["stdin:1:1: 'std' has no member 'printf'"]
+    );
+    assert_eq!(
+        check("import std::io;"),
+        [
+            "stdin:1:1: 'std::io' is a namespace; use its items as 'std::io::name', or import them with 'import std::io::*'"
+        ]
     );
     assert_eq!(check_body("std::nope();"), ["'std' has no member 'nope'"]);
     assert_eq!(
-        check("import std::printf; fn printf() {}"),
-        ["stdin:1:21: 'printf' is already declared in this scope"]
+        check("import std::io::printf; fn printf() {}"),
+        ["stdin:1:25: 'printf' is already declared in this scope"]
     );
 }
 
@@ -849,11 +861,13 @@ fn argument_types() {
 
 #[test]
 fn builtin_function_signatures() {
-    ok("import std::{printf, strcat};
+    ok("import std::io::printf; import std::str::strcat;
         fn f() { let x: s32 = printf(\"hi %d %f %s\", 1, 2.5, \"there\");
                  let buffer: u8[16]{0}; strcat(buffer, \"ab\"); }");
     assert_eq!(
-        messages("import std::{printf, strcat}; fn f() { printf(); strcat(\"a\"); printf(1); }"),
+        messages(
+            "import std::io::printf; import std::str::strcat; fn f() { printf(); strcat(\"a\"); printf(1); }"
+        ),
         [
             "'printf' takes 1 argument, but 0 were given",
             "'strcat' takes 2 arguments, but 1 was given",
@@ -862,7 +876,7 @@ fn builtin_function_signatures() {
     );
     assert_eq!(
         messages(
-            "import std::printf; struct P { x: s32 } fn g() -> iter s32 { yield 1; }
+            "import std::io::printf; struct P { x: s32 } fn g() -> iter s32 { yield 1; }
              fn f() { printf(\"%d\", P { x: 1 }); printf(\"%d\", g()); }"
         ),
         [
@@ -874,14 +888,18 @@ fn builtin_function_signatures() {
 
 #[test]
 fn void_pointers() {
-    ok("import std::{malloc, free, memcpy, time};
+    ok(
+        "import std::mem::{malloc, free, memcpy}; import std::time::time;
         fn f(p: &s32) { let a: *s32 = malloc(4); let b: u8[?] = malloc(8);
                         let buffer: u8[4]{0}; memcpy(buffer, p, 4); memcpy(a, b, 4);
-                        free(a); free(b); let t: s64 = time(0); }");
-    ok("import std::malloc; fn f() { let p = malloc(4) as *s32; let n = malloc(4) as usize; }");
+                        free(a); free(b); let t: s64 = time(0); }",
+    );
+    ok(
+        "import std::mem::malloc; fn f() { let p = malloc(4) as *s32; let n = malloc(4) as usize; }",
+    );
     assert_eq!(
         messages(
-            "import std::{malloc, free}; fn f() { let x: s32 = malloc(4); free(1); free(2.0); }"
+            "import std::mem::{malloc, free}; fn f() { let x: s32 = malloc(4); free(1); free(2.0); }"
         ),
         [
             "Expected 's32', found '*void'",
@@ -1269,4 +1287,86 @@ fn for_clause_flow() {
     ok_body("let a: s32; for (;;) { a = 1; break; } a;");
     ok("fn f() -> s32 { for (;;) { return 1; } }");
     ok_body("for (let i = 0; i < 4; i++) { if (flag) { continue; } break; }");
+}
+
+#[test]
+fn namespaces() {
+    ok("namespace a::b {
+            const N = 2;
+            struct P { x: s32 }
+            enum E { X }
+            fn f(p: P) -> s32 { p.x * N + g() }
+        }
+        namespace a {
+            fn g() -> s32 { b::N }
+            namespace b { fn g() -> s32 { 0 } }
+        }
+        fn main() -> s32 {
+            let e: a::b::E = a::b::E::X;
+            a::b::f(a::b::P { x: 1 }) + a::g()
+        }");
+    // The standard library's namespaces take more names
+    ok("namespace std::io { fn own() {} } fn f() { std::io::own(); std::io::puts(\"\"); }");
+}
+
+#[test]
+fn namespace_errors() {
+    assert_eq!(
+        check("namespace a { fn f() {} } namespace a { fn f() {} }"),
+        ["stdin:1:41: 'a::f' is already declared in this scope"]
+    );
+    assert_eq!(
+        check("namespace a { fn f() {} } fn g() { a::h(); a::b::f(); }"),
+        [
+            "stdin:1:36: 'a' has no member 'h'",
+            "stdin:1:44: 'a' has no member 'b'"
+        ]
+    );
+    assert_eq!(
+        check("namespace a { const N = 1; } fn g() -> s32 { N }"),
+        ["stdin:1:46: Undefined name 'N'"]
+    );
+    assert_eq!(
+        check_body("namespace a {}"),
+        ["'namespace' is only allowed at the top level or inside another namespace"]
+    );
+    assert_eq!(
+        check("namespace a { import std::io::printf; }"),
+        ["stdin:1:15: 'import' is only allowed outside of namespaces"]
+    );
+}
+
+#[test]
+fn extern_functions() {
+    ok(
+        "extern \"C\" fn abs(n: s32) -> s32; extern \"C\" fn printf(format: u8[?], ...) -> s32;
+        fn f() -> s32 { printf(\"%d %f\", 1, 2.5); abs(-1) }",
+    );
+    assert_eq!(
+        check("extern \"Rust\" fn f();"),
+        ["stdin:1:1: Unknown ABI \"Rust\"; only extern \"C\" is supported"]
+    );
+    assert_eq!(
+        messages("extern \"C\" fn abs(n: s32) -> s32; fn f() { abs(); abs(1, 2); }"),
+        [
+            "'abs' takes 1 argument, but 0 were given",
+            "'abs' takes 1 argument, but 2 were given"
+        ]
+    );
+    assert_eq!(
+        check("fn f(p: void) {}"),
+        ["stdin:1:1: 'void' can only be pointed to, as '*void'"]
+    );
+}
+
+#[test]
+fn the_standard_library_is_always_loaded() {
+    ok("fn f() -> s32 { std::io::puts(\"hi\"); std::mem::free(std::mem::malloc(4)); 0 }");
+    ok(
+        "import std::io::{printf, puts}; import std::math::*; fn f() { printf(\"%f\", sqrt(2.0)); puts(\"\"); }",
+    );
+    assert_eq!(
+        check_body("std::io::nope();"),
+        ["'std::io' has no member 'nope'"]
+    );
 }

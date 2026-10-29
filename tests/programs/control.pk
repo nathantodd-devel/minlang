@@ -1,4 +1,4 @@
-import std::printf;
+import std::io::printf;
 
 fn noisy(label: u8[?], value: bool) -> bool {
     printf("%s ", label);

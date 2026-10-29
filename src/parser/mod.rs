@@ -65,8 +65,18 @@ fn assignment_operator(symbol: Punctuation) -> Option<Option<BinaryOperator>> {
     })
 }
 
+/// A comment set aside from the token stream, with the index of the token
+/// that follows it.
+struct Comment {
+    next: usize,
+    token: Token,
+}
+
 pub struct Parser {
+    /// The tokens to parse, without comments.
     pub tokens: TokenStream,
+    /// In source order.
+    comments: Vec<Comment>,
     position: usize,
     pub errors: Vec<ParserError>,
     pub node: Ast,
@@ -81,8 +91,21 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: TokenStream, filename: Option<&str>) -> Self {
+        let mut code = Vec::with_capacity(tokens.len());
+        let mut comments = Vec::new();
+        for token in tokens {
+            match token.kind {
+                TokenKind::Comment { .. } => comments.push(Comment {
+                    next: code.len(),
+                    token,
+                }),
+                _ => code.push(token),
+            }
+        }
+
         Self {
-            tokens,
+            tokens: code,
+            comments,
             position: 0,
             errors: Vec::new(),
             node: Vec::new(),
@@ -252,6 +275,34 @@ impl Parser {
         (position, start..self.position)
     }
 
+    /// The `///` lines directly above the token at `index`, joined with
+    /// newlines, with the space after each `///` dropped.
+    fn doc_comment(&self, index: usize) -> Option<String> {
+        let mut line = self.tokens.get(index)?.line;
+        let end = self
+            .comments
+            .partition_point(|comment| comment.next <= index);
+
+        let mut lines = Vec::new();
+        for comment in self.comments[..end].iter().rev() {
+            match &comment.token.kind {
+                TokenKind::Comment { text, doc: true }
+                    if comment.next == index && comment.token.line + 1 == line =>
+                {
+                    lines.push(text.strip_prefix(' ').unwrap_or(text));
+                    line = comment.token.line;
+                }
+                _ => break,
+            }
+        }
+
+        if lines.is_empty() {
+            return None;
+        }
+        lines.reverse();
+        Some(lines.join("\n"))
+    }
+
     fn new_id(&self) -> usize {
         let id = self.next_id.get();
         self.next_id.set(id + 1);
@@ -359,6 +410,7 @@ impl Parser {
                 self.peek_keyword(),
                 Some(
                     Keyword::Pub
+                        | Keyword::Namespace
                         | Keyword::Fn
                         | Keyword::Struct
                         | Keyword::Enum
@@ -619,7 +671,7 @@ impl Parser {
             return Err(self.unexpected("expression"));
         };
 
-        let kind = match token.kind.clone() {
+        let mut kind = match token.kind.clone() {
             TokenKind::Identifier { .. } => {
                 let name = self.parse_path()?;
 
@@ -692,7 +744,9 @@ impl Parser {
                 match keyword {
                     Keyword::Import => self.parse_import()?,
                     Keyword::Pub => self.parse_public()?,
+                    Keyword::Namespace => self.parse_namespace()?,
                     Keyword::Fn => self.parse_function()?,
+                    Keyword::Extern => self.parse_extern()?,
                     Keyword::Let => self.parse_let(false)?,
                     Keyword::Const => self.parse_let(true)?,
                     Keyword::Struct => self.parse_struct()?,
@@ -726,7 +780,20 @@ impl Parser {
                 }
             }
             TokenKind::Punctuation { .. } => return Err(self.unexpected("expression")),
+            TokenKind::Comment { .. } => unreachable!("comments are set aside by Parser::new"),
         };
+
+        match &mut kind {
+            ExpressionKind::FunctionDeclarationExpression { doc, .. }
+            | ExpressionKind::ExternFunctionDeclarationExpression { doc, .. }
+            | ExpressionKind::LetExpression { doc, .. }
+            | ExpressionKind::StructDeclarationExpression { doc, .. }
+            | ExpressionKind::EnumDeclarationExpression { doc, .. }
+            | ExpressionKind::NamespaceExpression { doc, .. } => {
+                *doc = self.doc_comment(start);
+            }
+            _ => {}
+        }
 
         Ok(self.finish(start, kind))
     }
@@ -762,12 +829,33 @@ impl Parser {
         Ok(ExpressionKind::ImportExpression { module, imports })
     }
 
+    /// `namespace a::b { ... }`, whose items are parsed like the top level's.
+    fn parse_namespace(&mut self) -> ParseResult<ExpressionKind> {
+        let mut path = vec![self.expect_identifier()?];
+        while self.eat(Punctuation::Namespace) {
+            path.push(self.expect_identifier()?);
+        }
+
+        let Block { mut body, result } = self.parse_block()?;
+        body.extend(result.map(|result| *result));
+
+        Ok(ExpressionKind::NamespaceExpression {
+            doc: None,
+            path,
+            items: body,
+        })
+    }
+
     /// `pub` followed by a `fn`, `let`, `const`, `struct` or `enum`.
     fn parse_public(&mut self) -> ParseResult<ExpressionKind> {
         let mut kind = match self.peek_keyword() {
             Some(Keyword::Fn) => {
                 self.position += 1;
                 self.parse_function()?
+            }
+            Some(Keyword::Extern) => {
+                self.position += 1;
+                self.parse_extern()?
             }
             Some(Keyword::Let) => {
                 self.position += 1;
@@ -785,10 +873,13 @@ impl Parser {
                 self.position += 1;
                 self.parse_enum()?
             }
-            _ => return Err(self.unexpected("'fn', 'let', 'const', 'struct' or 'enum'")),
+            _ => {
+                return Err(self.unexpected("'fn', 'extern', 'let', 'const', 'struct' or 'enum'"));
+            }
         };
         match &mut kind {
             ExpressionKind::FunctionDeclarationExpression { public, .. }
+            | ExpressionKind::ExternFunctionDeclarationExpression { public, .. }
             | ExpressionKind::LetExpression { public, .. }
             | ExpressionKind::StructDeclarationExpression { public, .. }
             | ExpressionKind::EnumDeclarationExpression { public, .. } => *public = true,
@@ -814,6 +905,7 @@ impl Parser {
 
         Ok(ExpressionKind::FunctionDeclarationExpression {
             public: false,
+            doc: None,
             name,
             params,
             return_type,
@@ -821,11 +913,60 @@ impl Parser {
         })
     }
 
+    /// `extern "C" fn name(a: T, ...) -> R`, without a body.
+    fn parse_extern(&mut self) -> ParseResult<ExpressionKind> {
+        let abi = match self.peek_token() {
+            Some(Token {
+                kind: TokenKind::StringLiteral { value },
+                ..
+            }) => value.clone(),
+            _ => return Err(self.unexpected("an ABI string like \"C\"")),
+        };
+        self.position += 1;
+        self.expect_keyword(Keyword::Fn)?;
+        let name = self.expect_identifier()?;
+
+        self.expect(Punctuation::LParen)?;
+        let mut params = Vec::new();
+        let mut variadic = false;
+        while !self.eat(Punctuation::RParen) {
+            // `...` can only come last
+            if self.eat(Punctuation::Ellipsis) {
+                variadic = true;
+                self.eat(Punctuation::Comma);
+                self.expect(Punctuation::RParen)?;
+                break;
+            }
+            params.push(self.parse_param()?);
+            if !self.eat(Punctuation::Comma) {
+                self.expect(Punctuation::RParen)?;
+                break;
+            }
+        }
+
+        let return_type = if self.eat(Punctuation::Point) {
+            Some(self.parse_type(false)?)
+        } else {
+            None
+        };
+
+        Ok(ExpressionKind::ExternFunctionDeclarationExpression {
+            public: false,
+            doc: None,
+            abi,
+            name,
+            params,
+            variadic,
+            return_type,
+        })
+    }
+
     fn parse_param(&mut self) -> ParseResult<Param> {
+        let doc = self.doc_comment(self.position);
         let name = self.expect_identifier()?;
         self.expect(Punctuation::Colon)?;
         let r#type = self.parse_type(false)?;
-        Ok(Param { name, r#type })
+        Ok(Param { name, r#type, doc })
     }
 
     /// `let name: T = value`, with both the type and value optional.
@@ -846,6 +987,7 @@ impl Parser {
 
         Ok(ExpressionKind::LetExpression {
             public: false,
+            doc: None,
             constant,
             name,
             typeinfo,
@@ -860,6 +1002,7 @@ impl Parser {
         let fields = self.parse_list(Punctuation::RBrace, Self::parse_param)?;
         Ok(ExpressionKind::StructDeclarationExpression {
             public: false,
+            doc: None,
             name,
             fields,
         })
@@ -887,6 +1030,7 @@ impl Parser {
 
         Ok(ExpressionKind::EnumDeclarationExpression {
             public: false,
+            doc: None,
             name,
             backing_type,
             variants,
@@ -894,6 +1038,7 @@ impl Parser {
     }
 
     fn parse_enum_variant(&mut self) -> ParseResult<EnumVariant> {
+        let doc = self.doc_comment(self.position);
         let name = self.expect_identifier()?;
 
         let fields = if self.eat(Punctuation::LParen) {
@@ -916,6 +1061,7 @@ impl Parser {
 
         Ok(EnumVariant {
             name,
+            doc,
             fields,
             value,
         })

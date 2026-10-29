@@ -1,4 +1,5 @@
-import std::{printf, strcat};
+import std::io::printf;
+import std::str::strcat;
 import types::{*};
 
 fn main(argc: s32, argv: u8[?][?], envp: u8[?][?]) -> s32 {

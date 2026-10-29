@@ -1,0 +1,308 @@
+//! Math functions (C's `math.h`, and `stdlib.h`'s integer ones). Each has an `f64` version and an `f32` one ending in `f`.
+
+namespace std::math {
+    /// Gets the absolute value of an integer.
+    /// @arg {n} the number
+    /// @returns |n|
+    pub extern "C" fn abs(n: s32) -> s32;
+
+    /// Gets the absolute value of an integer.
+    /// @arg {n} the number
+    /// @returns |n|
+    pub extern "C" fn labs(n: s64) -> s64;
+
+    /// Gets the absolute value of an integer.
+    /// @arg {n} the number
+    /// @returns |n|
+    pub extern "C" fn llabs(n: s64) -> s64;
+
+    /// Gets a pseudo-random number. Not for cryptography.
+    /// @returns a number from 0 to RAND_MAX (2147483647 on Linux)
+    pub extern "C" fn rand() -> s32;
+
+    /// Seeds `rand`.
+    /// @arg {seed} the seed
+    pub extern "C" fn srand(seed: u32);
+
+    /// Gets the square root.
+    /// @arg {x} the number
+    /// @returns √x
+    pub extern "C" fn sqrt(x: f64) -> f64;
+
+    /// Gets the square root.
+    /// @arg {x} the number
+    /// @returns √x
+    pub extern "C" fn sqrtf(x: f32) -> f32;
+
+    /// Gets the cube root.
+    /// @arg {x} the number
+    /// @returns ∛x
+    pub extern "C" fn cbrt(x: f64) -> f64;
+
+    /// Gets the cube root.
+    /// @arg {x} the number
+    /// @returns ∛x
+    pub extern "C" fn cbrtf(x: f32) -> f32;
+
+    /// Raises e to a power.
+    /// @arg {x} the number
+    /// @returns eˣ
+    pub extern "C" fn exp(x: f64) -> f64;
+
+    /// Raises e to a power.
+    /// @arg {x} the number
+    /// @returns eˣ
+    pub extern "C" fn expf(x: f32) -> f32;
+
+    /// Raises 2 to a power.
+    /// @arg {x} the number
+    /// @returns 2ˣ
+    pub extern "C" fn exp2(x: f64) -> f64;
+
+    /// Raises 2 to a power.
+    /// @arg {x} the number
+    /// @returns 2ˣ
+    pub extern "C" fn exp2f(x: f32) -> f32;
+
+    /// Gets the natural logarithm.
+    /// @arg {x} the number
+    /// @returns ln x
+    pub extern "C" fn log(x: f64) -> f64;
+
+    /// Gets the natural logarithm.
+    /// @arg {x} the number
+    /// @returns ln x
+    pub extern "C" fn logf(x: f32) -> f32;
+
+    /// Gets the base 2 logarithm.
+    /// @arg {x} the number
+    /// @returns log₂ x
+    pub extern "C" fn log2(x: f64) -> f64;
+
+    /// Gets the base 2 logarithm.
+    /// @arg {x} the number
+    /// @returns log₂ x
+    pub extern "C" fn log2f(x: f32) -> f32;
+
+    /// Gets the base 10 logarithm.
+    /// @arg {x} the number
+    /// @returns log₁₀ x
+    pub extern "C" fn log10(x: f64) -> f64;
+
+    /// Gets the base 10 logarithm.
+    /// @arg {x} the number
+    /// @returns log₁₀ x
+    pub extern "C" fn log10f(x: f32) -> f32;
+
+    /// Gets the sine of an angle in radians.
+    /// @arg {x} the number
+    /// @returns sin x
+    pub extern "C" fn sin(x: f64) -> f64;
+
+    /// Gets the sine of an angle in radians.
+    /// @arg {x} the number
+    /// @returns sin x
+    pub extern "C" fn sinf(x: f32) -> f32;
+
+    /// Gets the cosine of an angle in radians.
+    /// @arg {x} the number
+    /// @returns cos x
+    pub extern "C" fn cos(x: f64) -> f64;
+
+    /// Gets the cosine of an angle in radians.
+    /// @arg {x} the number
+    /// @returns cos x
+    pub extern "C" fn cosf(x: f32) -> f32;
+
+    /// Gets the tangent of an angle in radians.
+    /// @arg {x} the number
+    /// @returns tan x
+    pub extern "C" fn tan(x: f64) -> f64;
+
+    /// Gets the tangent of an angle in radians.
+    /// @arg {x} the number
+    /// @returns tan x
+    pub extern "C" fn tanf(x: f32) -> f32;
+
+    /// Gets the arcsine.
+    /// @arg {x} the number
+    /// @returns the angle in radians, from -π/2 to π/2
+    pub extern "C" fn asin(x: f64) -> f64;
+
+    /// Gets the arcsine.
+    /// @arg {x} the number
+    /// @returns the angle in radians, from -π/2 to π/2
+    pub extern "C" fn asinf(x: f32) -> f32;
+
+    /// Gets the arccosine.
+    /// @arg {x} the number
+    /// @returns the angle in radians, from 0 to π
+    pub extern "C" fn acos(x: f64) -> f64;
+
+    /// Gets the arccosine.
+    /// @arg {x} the number
+    /// @returns the angle in radians, from 0 to π
+    pub extern "C" fn acosf(x: f32) -> f32;
+
+    /// Gets the arctangent.
+    /// @arg {x} the number
+    /// @returns the angle in radians, from -π/2 to π/2
+    pub extern "C" fn atan(x: f64) -> f64;
+
+    /// Gets the arctangent.
+    /// @arg {x} the number
+    /// @returns the angle in radians, from -π/2 to π/2
+    pub extern "C" fn atanf(x: f32) -> f32;
+
+    /// Gets the hyperbolic sine.
+    /// @arg {x} the number
+    /// @returns sinh x
+    pub extern "C" fn sinh(x: f64) -> f64;
+
+    /// Gets the hyperbolic sine.
+    /// @arg {x} the number
+    /// @returns sinh x
+    pub extern "C" fn sinhf(x: f32) -> f32;
+
+    /// Gets the hyperbolic cosine.
+    /// @arg {x} the number
+    /// @returns cosh x
+    pub extern "C" fn cosh(x: f64) -> f64;
+
+    /// Gets the hyperbolic cosine.
+    /// @arg {x} the number
+    /// @returns cosh x
+    pub extern "C" fn coshf(x: f32) -> f32;
+
+    /// Gets the hyperbolic tangent.
+    /// @arg {x} the number
+    /// @returns tanh x
+    pub extern "C" fn tanh(x: f64) -> f64;
+
+    /// Gets the hyperbolic tangent.
+    /// @arg {x} the number
+    /// @returns tanh x
+    pub extern "C" fn tanhf(x: f32) -> f32;
+
+    /// Rounds down.
+    /// @arg {x} the number
+    /// @returns the largest whole number not above x
+    pub extern "C" fn floor(x: f64) -> f64;
+
+    /// Rounds down.
+    /// @arg {x} the number
+    /// @returns the largest whole number not above x
+    pub extern "C" fn floorf(x: f32) -> f32;
+
+    /// Rounds up.
+    /// @arg {x} the number
+    /// @returns the smallest whole number not below x
+    pub extern "C" fn ceil(x: f64) -> f64;
+
+    /// Rounds up.
+    /// @arg {x} the number
+    /// @returns the smallest whole number not below x
+    pub extern "C" fn ceilf(x: f32) -> f32;
+
+    /// Rounds to the nearest whole number, halves away from zero.
+    /// @arg {x} the number
+    /// @returns the rounded number
+    pub extern "C" fn round(x: f64) -> f64;
+
+    /// Rounds to the nearest whole number, halves away from zero.
+    /// @arg {x} the number
+    /// @returns the rounded number
+    pub extern "C" fn roundf(x: f32) -> f32;
+
+    /// Rounds toward zero.
+    /// @arg {x} the number
+    /// @returns x without its fraction
+    pub extern "C" fn trunc(x: f64) -> f64;
+
+    /// Rounds toward zero.
+    /// @arg {x} the number
+    /// @returns x without its fraction
+    pub extern "C" fn truncf(x: f32) -> f32;
+
+    /// Gets the absolute value.
+    /// @arg {x} the number
+    /// @returns |x|
+    pub extern "C" fn fabs(x: f64) -> f64;
+
+    /// Gets the absolute value.
+    /// @arg {x} the number
+    /// @returns |x|
+    pub extern "C" fn fabsf(x: f32) -> f32;
+
+    /// Raises a number to a power.
+    /// @arg {x} the base
+    /// @arg {y} the exponent
+    /// @returns xʸ
+    pub extern "C" fn pow(x: f64, y: f64) -> f64;
+
+    /// Raises a number to a power.
+    /// @arg {x} the base
+    /// @arg {y} the exponent
+    /// @returns xʸ
+    pub extern "C" fn powf(x: f32, y: f32) -> f32;
+
+    /// Gets the angle of the point (x, y).
+    /// @arg {y} the y coordinate
+    /// @arg {x} the x coordinate
+    /// @returns the angle in radians, from -π to π
+    pub extern "C" fn atan2(y: f64, x: f64) -> f64;
+
+    /// Gets the angle of the point (x, y).
+    /// @arg {y} the y coordinate
+    /// @arg {x} the x coordinate
+    /// @returns the angle in radians, from -π to π
+    pub extern "C" fn atan2f(y: f32, x: f32) -> f32;
+
+    /// Gets the remainder of a division.
+    /// @arg {x} the dividend
+    /// @arg {y} the divisor
+    /// @returns x - n·y for the whole n that rounds x/y toward zero
+    pub extern "C" fn fmod(x: f64, y: f64) -> f64;
+
+    /// Gets the remainder of a division.
+    /// @arg {x} the dividend
+    /// @arg {y} the divisor
+    /// @returns x - n·y for the whole n that rounds x/y toward zero
+    pub extern "C" fn fmodf(x: f32, y: f32) -> f32;
+
+    /// Gets the length of a right triangle's hypotenuse.
+    /// @arg {x} one side
+    /// @arg {y} the other side
+    /// @returns √(x² + y²)
+    pub extern "C" fn hypot(x: f64, y: f64) -> f64;
+
+    /// Gets the length of a right triangle's hypotenuse.
+    /// @arg {x} one side
+    /// @arg {y} the other side
+    /// @returns √(x² + y²)
+    pub extern "C" fn hypotf(x: f32, y: f32) -> f32;
+
+    /// Gets the smaller of two numbers.
+    /// @arg {x} a number
+    /// @arg {y} another number
+    /// @returns the smaller
+    pub extern "C" fn fmin(x: f64, y: f64) -> f64;
+
+    /// Gets the smaller of two numbers.
+    /// @arg {x} a number
+    /// @arg {y} another number
+    /// @returns the smaller
+    pub extern "C" fn fminf(x: f32, y: f32) -> f32;
+
+    /// Gets the larger of two numbers.
+    /// @arg {x} a number
+    /// @arg {y} another number
+    /// @returns the larger
+    pub extern "C" fn fmax(x: f64, y: f64) -> f64;
+
+    /// Gets the larger of two numbers.
+    /// @arg {x} a number
+    /// @arg {y} another number
+    /// @returns the larger
+    pub extern "C" fn fmaxf(x: f32, y: f32) -> f32;
+}

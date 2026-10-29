@@ -1,5 +1,6 @@
 [
   (block)
+  (declaration_list)
   (field_declaration_list)
   (enum_variant_list)
   (switch_body)

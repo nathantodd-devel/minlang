@@ -292,7 +292,9 @@ impl<'a> Lowerer<'a> {
             }
             let is_main = function.name == "main" && function.path.is_empty();
             let top_level = !imported && ast.iter().any(|item| item.id == function.declaration);
-            let name = if is_main && top_level {
+            let name = if let Some(c_name) = &function.c_name {
+                c_name.clone()
+            } else if is_main && top_level {
                 "main".to_owned()
             } else {
                 mangle::function(
@@ -309,16 +311,7 @@ impl<'a> Lowerer<'a> {
 
     fn lower_module(&mut self, ast: &'a Ast) {
         self.declare_imports();
-
-        for item in ast {
-            match &item.kind {
-                ExpressionKind::FunctionDeclarationExpression { .. } => self.pending.push(item),
-                ExpressionKind::LetExpression {
-                    typeinfo, value, ..
-                } => self.lower_global(item, typeinfo.as_ref(), value.as_deref()),
-                _ => {}
-            }
-        }
+        self.lower_items(ast);
 
         // In the order found: top-level functions in source order, then the
         // functions nested in each
@@ -331,22 +324,26 @@ impl<'a> Lowerer<'a> {
         self.lower_global_initializer();
     }
 
-    /// Declares the imported functions and globals, which other modules
-    /// define.
+    /// Lowers the globals among `items`, the top level's or a namespace's, and
+    /// queues their functions.
+    fn lower_items(&mut self, items: &'a [Expression]) {
+        for item in items {
+            match &item.kind {
+                ExpressionKind::FunctionDeclarationExpression { .. } => self.pending.push(item),
+                ExpressionKind::LetExpression {
+                    typeinfo, value, ..
+                } => self.lower_global(item, typeinfo.as_ref(), value.as_deref()),
+                ExpressionKind::NamespaceExpression { items, .. } => self.lower_items(items),
+                _ => {}
+            }
+        }
+    }
+
+    /// Declares the imported globals, which other modules define. Functions
+    /// defined elsewhere are declared when called, since every file sees all
+    /// of the standard library's.
     fn declare_imports(&mut self) {
         let program = self.program;
-        for (id, function) in program.functions.iter().enumerate() {
-            if function.module.is_none() {
-                continue;
-            }
-            let return_type = match &function.return_type {
-                Some(ty) => self.ir_type(ty),
-                None => IrType::Void,
-            };
-            let params = function.params.iter().map(|ty| self.ir_type(ty)).collect();
-            let name = self.function_names[id].clone();
-            self.declare(&name, return_type, params, false);
-        }
         for (variable, info) in program.variables.iter().enumerate() {
             if info.module.is_some() {
                 self.module.external_globals.push(ExternalGlobal {
@@ -394,7 +391,7 @@ impl<'a> Lowerer<'a> {
 
     fn global_name(&self, variable: usize) -> String {
         let info = &self.program.variables[variable];
-        mangle::global(self.module_of(&info.module), &info.name)
+        mangle::global(self.module_of(&info.module), &info.path, &info.name)
     }
 
     fn lower_global(

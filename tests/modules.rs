@@ -239,3 +239,64 @@ fn imported_items_are_external_symbols() {
         "{ir}"
     );
 }
+
+#[test]
+fn namespaces_merge_across_files() {
+    let library = "namespace std::mem {
+                       pub fn copy() -> s32 { 1 }
+                       pub const PAGE: s32 = 4096;
+                       fn private() {}
+                   }";
+    let directory = project(
+        "namespaces",
+        &[
+            ("lib.pk", library),
+            (
+                "main.pk",
+                "import lib;
+                 namespace std::mem { fn own() -> s32 { copy() + PAGE } }
+                 fn main() -> s32 { std::mem::copy() + std::mem::own() }",
+            ),
+        ],
+    );
+    let (ast, imported, program) = check(&directory);
+    let ir = codegen::lower(&ast, &program.unwrap(), Some("main.pk"))
+        .and_then(|module| TextBackend.emit(&module))
+        .unwrap();
+    assert!(ir.contains("declare i32 @_ZN3lib3std3mem4copyEv()"), "{ir}");
+    assert!(
+        ir.contains("@_ZN3lib3std3mem4PAGEE = external global i32"),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("define internal i32 @_ZN4main3std3mem3ownEv()"),
+        "{ir}"
+    );
+
+    let lib = &imported.files[0];
+    let ir = codegen::lower(&lib.ast, &lib.program, Some("lib.pk"))
+        .and_then(|module| TextBackend.emit(&module))
+        .unwrap();
+    assert!(ir.contains("define i32 @_ZN3lib3std3mem4copyEv()"), "{ir}");
+
+    // Only `pub` items merge, and a name can't be declared twice
+    let directory = project(
+        "namespace_clash",
+        &[
+            ("lib.pk", library),
+            (
+                "main.pk",
+                "import lib;
+                 namespace std::mem { fn copy() {} }
+                 fn f() { std::mem::private(); }",
+            ),
+        ],
+    );
+    assert_eq!(
+        errors(&directory),
+        [
+            "'std::mem::copy' is already declared in this scope",
+            "'std::mem' has no member 'private'"
+        ]
+    );
+}

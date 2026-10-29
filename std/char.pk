@@ -1,0 +1,68 @@
+//! Classifying and converting ASCII characters (C's `ctype.h`). Each takes a character as an `s32`.
+
+namespace std::char {
+    /// Tells whether a character is a letter or digit.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isalnum(c: s32) -> s32;
+
+    /// Tells whether a character is a letter.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isalpha(c: s32) -> s32;
+
+    /// Tells whether a character is a control character.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn iscntrl(c: s32) -> s32;
+
+    /// Tells whether a character is a decimal digit.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isdigit(c: s32) -> s32;
+
+    /// Tells whether a character is printable and not a space.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isgraph(c: s32) -> s32;
+
+    /// Tells whether a character is a lowercase letter.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn islower(c: s32) -> s32;
+
+    /// Tells whether a character is printable, including a space.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isprint(c: s32) -> s32;
+
+    /// Tells whether a character is punctuation.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn ispunct(c: s32) -> s32;
+
+    /// Tells whether a character is whitespace.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isspace(c: s32) -> s32;
+
+    /// Tells whether a character is an uppercase letter.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isupper(c: s32) -> s32;
+
+    /// Tells whether a character is a hexadecimal digit.
+    /// @arg {c} the character
+    /// @returns non-zero if it is
+    pub extern "C" fn isxdigit(c: s32) -> s32;
+
+    /// Converts a character to lowercase.
+    /// @arg {c} the character
+    /// @returns the lowercase letter, or `c` if it isn't an uppercase one
+    pub extern "C" fn tolower(c: s32) -> s32;
+
+    /// Converts a character to uppercase.
+    /// @arg {c} the character
+    /// @returns the uppercase letter, or `c` if it isn't a lowercase one
+    pub extern "C" fn toupper(c: s32) -> s32;
+}

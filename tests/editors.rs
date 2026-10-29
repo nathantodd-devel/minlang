@@ -217,6 +217,7 @@ fn tree_sitter_parses_every_valid_example() {
     let mut files: Vec<_> = std::fs::read_dir("examples")
         .unwrap()
         .chain(std::fs::read_dir("tests/programs").unwrap())
+        .chain(std::fs::read_dir("std").unwrap())
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|extension| extension == "pk"))
         // A catalog of deliberately invalid literals

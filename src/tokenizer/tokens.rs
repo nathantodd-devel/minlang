@@ -46,6 +46,13 @@ pub enum TokenKind {
     BooleanLiteral {
         value: bool,
     },
+    /// `// text` or, with `doc` set, `/// text`. `text` is everything after
+    /// the slashes. The parser sets comments aside and attaches doc comments
+    /// to the declaration below them.
+    Comment {
+        text: String,
+        doc: bool,
+    },
 }
 
 impl TokenKind {
@@ -58,6 +65,7 @@ impl TokenKind {
             Self::StringLiteral { .. } => TokenType::StringLiteral,
             Self::FloatLiteral { .. } => TokenType::FloatLiteral,
             Self::BooleanLiteral { .. } => TokenType::BooleanLiteral,
+            Self::Comment { .. } => TokenType::Comment,
         }
     }
 }
@@ -80,6 +88,7 @@ pub enum TokenType {
     StringLiteral,
     FloatLiteral,
     BooleanLiteral,
+    Comment,
 }
 
 impl fmt::Display for TokenType {
@@ -152,6 +161,8 @@ string_enum!(Keyword {
     Iter = "iter",
     As = "as",
     Pub = "pub",
+    Namespace = "namespace",
+    Extern = "extern",
 });
 
 string_enum!(Punctuation {
@@ -178,6 +189,7 @@ string_enum!(Punctuation {
     Neq = "!=",
     Not = "!",
     Comma = ",",
+    Ellipsis = "...",
     Dot = ".",
     Mod = "%",
     Div = "/",

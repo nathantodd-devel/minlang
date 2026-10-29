@@ -1,0 +1,22 @@
+//! Clocks and sleeping (C's `time.h` and `unistd.h`).
+
+namespace std::time {
+    /// Gets the current calendar time.
+    /// @arg {result} where to also store the time, or null
+    /// @returns the seconds since 1970-01-01 UTC, or -1 on error
+    pub extern "C" fn time(result: *void) -> s64;
+
+    /// Gets the processor time this program has used.
+    /// @returns the time in units of CLOCKS_PER_SEC (1000000 on Linux), or -1
+    pub extern "C" fn clock() -> s64;
+
+    /// Pauses the program.
+    /// @arg {seconds} how long to sleep
+    /// @returns 0, or the seconds left if a signal woke it
+    pub extern "C" fn sleep(seconds: u32) -> u32;
+
+    /// Pauses the program for some microseconds.
+    /// @arg {microseconds} how long to sleep
+    /// @returns 0, or -1 on error
+    pub extern "C" fn usleep(microseconds: u32) -> s32;
+}

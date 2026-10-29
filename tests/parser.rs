@@ -82,6 +82,7 @@ fn sexpr(expression: &Expression) -> String {
             name,
             typeinfo,
             value,
+            ..
         } => format!(
             "({}{} {name} {} {})",
             if *public { "pub " } else { "" },
@@ -458,7 +459,7 @@ fn pub_declarations() {
 
     assert_eq!(
         errors("pub if (a) {}"),
-        ["stdin:1:5: Expected 'fn', 'let', 'const', 'struct' or 'enum', but got 'if'"]
+        ["stdin:1:5: Expected 'fn', 'extern', 'let', 'const', 'struct' or 'enum', but got 'if'"]
     );
 }
 
@@ -1199,7 +1200,7 @@ fn examples_parse() {
 #[test]
 fn hello_example_structure() {
     let ast = ok(&std::fs::read_to_string("examples/hello.pk").unwrap());
-    let ExpressionKind::FunctionDeclarationExpression { body, .. } = &ast[2].kind else {
+    let ExpressionKind::FunctionDeclarationExpression { body, .. } = &ast[3].kind else {
         unreachable!()
     };
 
@@ -1288,5 +1289,150 @@ fn for_clause_allows_struct_literals() {
     assert_eq!(
         body("for (let p = Point { x: 0 }; p.x < 3; p.x++) {}"),
         "{(for-clause (let p _ (Point x=0)) (< (. p x) 3) (++ (. p x)) _ {})}"
+    );
+}
+
+#[test]
+fn doc_comments_attach_to_declarations() {
+    let ast = ok("// not a doc comment
+/// Adds two numbers.
+///
+///   Indented.
+pub fn add(a: s32, b: s32) -> s32 { a + b }
+
+/// Detached by the blank line
+
+fn bare() {}
+
+/// A point.
+struct Point {
+    /// Across.
+    x: f32,
+    // Plain.
+    y: f32,
+}
+
+/// Colors.
+enum Color {
+    /// Warm.
+    Red,
+    Green,
+}
+
+//// A divider, not a doc comment
+const LIMIT = 4;
+");
+
+    let docs: Vec<_> = ast
+        .iter()
+        .map(|expression| match &expression.kind {
+            ExpressionKind::FunctionDeclarationExpression { doc, .. }
+            | ExpressionKind::LetExpression { doc, .. }
+            | ExpressionKind::StructDeclarationExpression { doc, .. }
+            | ExpressionKind::EnumDeclarationExpression { doc, .. } => doc.as_deref(),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(
+        docs,
+        [
+            Some("Adds two numbers.\n\n  Indented."),
+            None,
+            Some("A point."),
+            Some("Colors."),
+            None,
+        ]
+    );
+
+    let ExpressionKind::StructDeclarationExpression { fields, .. } = &ast[2].kind else {
+        unreachable!()
+    };
+    assert_eq!(fields[0].doc.as_deref(), Some("Across."));
+    assert_eq!(fields[1].doc, None);
+
+    let ExpressionKind::EnumDeclarationExpression { variants, .. } = &ast[3].kind else {
+        unreachable!()
+    };
+    assert_eq!(variants[0].doc.as_deref(), Some("Warm."));
+    assert_eq!(variants[1].doc, None);
+}
+
+#[test]
+fn comments_do_not_shift_token_ranges() {
+    let ast = ok("/// Doc\nlet x = 1; // trailing\nlet y = 2;");
+    assert_eq!(ast[0].tokens, 0..4);
+    assert_eq!(ast[1].tokens, 5..9);
+    let ExpressionKind::LetExpression { doc, .. } = &ast[1].kind else {
+        unreachable!()
+    };
+    assert_eq!(*doc, None);
+}
+
+#[test]
+fn namespaces() {
+    let ast =
+        ok("/// Memory.\nnamespace std::mem { pub fn copy() {} const N = 1; namespace inner {} };");
+    let ExpressionKind::NamespaceExpression { doc, path, items } = &ast[0].kind else {
+        unreachable!()
+    };
+    assert_eq!(doc.as_deref(), Some("Memory."));
+    assert_eq!(path, &["std", "mem"]);
+    assert_eq!(items.len(), 3);
+    assert!(matches!(
+        items[2].kind,
+        ExpressionKind::NamespaceExpression { .. }
+    ));
+
+    assert_eq!(
+        errors("namespace {}"),
+        ["stdin:1:11: Expected identifier, but got '{'"]
+    );
+}
+
+#[test]
+fn extern_functions() {
+    let ast = ok(
+        "/// Prints.\npub extern \"C\" fn printf(format: u8[?], ...) -> s32; extern \"C\" fn free(p: *void);",
+    );
+    let ExpressionKind::ExternFunctionDeclarationExpression {
+        public,
+        doc,
+        abi,
+        name,
+        params,
+        variadic,
+        return_type,
+    } = &ast[0].kind
+    else {
+        unreachable!()
+    };
+    assert!(*public && *variadic);
+    assert_eq!(doc.as_deref(), Some("Prints."));
+    assert_eq!(
+        (abi.as_str(), name.as_str(), params.len()),
+        ("C", "printf", 1)
+    );
+    assert_eq!(return_type.as_ref().map(type_sexpr).as_deref(), Some("s32"));
+    assert!(matches!(
+        ast[1].kind,
+        ExpressionKind::ExternFunctionDeclarationExpression {
+            variadic: false,
+            return_type: None,
+            ..
+        }
+    ));
+
+    assert_eq!(
+        errors("extern fn f();"),
+        ["stdin:1:8: Expected an ABI string like \"C\", but got 'fn'"]
+    );
+    // `...` must come last, and only `extern` functions take it
+    assert_eq!(
+        errors("extern \"C\" fn f(..., a: s32);"),
+        ["stdin:1:22: Expected ')', but got 'a'"]
+    );
+    assert_eq!(
+        errors("fn f(...) {}"),
+        ["stdin:1:6: Expected identifier, but got '...'"]
     );
 }

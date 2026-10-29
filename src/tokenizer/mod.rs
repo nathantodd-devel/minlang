@@ -90,6 +90,7 @@ impl Tokenizer {
             }
 
             if char == '/' && source.get(col + 1) == Some(&'/') {
+                self.tokenize_comment(source, line, col);
                 break;
             }
 
@@ -176,6 +177,23 @@ impl Tokenizer {
             TokenizerErrorKind::InvalidNumericLiteral(message),
             line,
             column,
+        );
+    }
+
+    /// A comment running from `start` to the end of the line. `///` starts a
+    /// doc comment, but `////` doesn't, so rows of slashes stay plain.
+    fn tokenize_comment(&mut self, source: &[char], line: usize, start: usize) {
+        let doc = source.get(start + 2) == Some(&'/') && source.get(start + 3) != Some(&'/');
+        let text_start = if doc { start + 3 } else { start + 2 };
+
+        self.push(
+            TokenKind::Comment {
+                text: slice(source, text_start, source.len()),
+                doc,
+            },
+            line,
+            start,
+            slice(source, start, source.len()),
         );
     }
 

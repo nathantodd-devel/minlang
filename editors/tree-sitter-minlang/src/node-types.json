@@ -424,11 +424,19 @@
           "named": true
         },
         {
+          "type": "extern_function_item",
+          "named": true
+        },
+        {
           "type": "function_item",
           "named": true
         },
         {
           "type": "import_declaration",
+          "named": true
+        },
+        {
+          "type": "namespace_item",
           "named": true
         },
         {
@@ -539,6 +547,45 @@
       "types": [
         {
           "type": "escape_sequence",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "declaration_list",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "enum_item",
+          "named": true
+        },
+        {
+          "type": "expression_statement",
+          "named": true
+        },
+        {
+          "type": "extern_function_item",
+          "named": true
+        },
+        {
+          "type": "function_item",
+          "named": true
+        },
+        {
+          "type": "import_declaration",
+          "named": true
+        },
+        {
+          "type": "namespace_item",
+          "named": true
+        },
+        {
+          "type": "struct_item",
           "named": true
         }
       ]
@@ -706,6 +753,52 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "extern_function_item",
+    "named": true,
+    "fields": {
+      "abi": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "parameters": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "parameters",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -1245,6 +1338,36 @@
     }
   },
   {
+    "type": "namespace_item",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "declaration_list",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "parameter",
     "named": true,
     "fields": {
@@ -1280,6 +1403,10 @@
       "types": [
         {
           "type": "parameter",
+          "named": true
+        },
+        {
+          "type": "variadic_parameter",
           "named": true
         }
       ]
@@ -1443,11 +1570,19 @@
           "named": true
         },
         {
+          "type": "extern_function_item",
+          "named": true
+        },
+        {
           "type": "function_item",
           "named": true
         },
         {
           "type": "import_declaration",
+          "named": true
+        },
+        {
+          "type": "namespace_item",
           "named": true
         },
         {
@@ -1970,6 +2105,10 @@
     "named": true
   },
   {
+    "type": "extern",
+    "named": false
+  },
+  {
     "type": "f32",
     "named": false
   },
@@ -2027,6 +2166,10 @@
   },
   {
     "type": "loop",
+    "named": false
+  },
+  {
+    "type": "namespace",
     "named": false
   },
   {
@@ -2088,6 +2231,10 @@
   {
     "type": "usize",
     "named": false
+  },
+  {
+    "type": "variadic_parameter",
+    "named": true
   },
   {
     "type": "while",

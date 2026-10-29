@@ -1,4 +1,4 @@
-import std::printf;
+import std::io::printf;
 
 struct Point {
     x: f32,

@@ -438,3 +438,33 @@ fn increment_and_decrement() {
     let raws: Vec<_> = tokens.iter().map(|token| token.raw.as_str()).collect();
     assert_eq!(raws, ["i", "++", "j", "--", "a", "-", "-", "b", "->", "c"]);
 }
+
+#[test]
+fn comments() {
+    let tokens = ok("a // plain\n/// doc\n//// divider\n///");
+    let comments: Vec<_> = tokens
+        .iter()
+        .filter_map(|token| match &token.kind {
+            TokenKind::Comment { text, doc } => Some((text.as_str(), *doc, token.line, token.col)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        comments,
+        [
+            (" plain", false, 0, 2),
+            (" doc", true, 1, 0),
+            ("// divider", false, 2, 0),
+            ("", true, 3, 0),
+        ]
+    );
+    assert_eq!(tokens[1].raw, "// plain");
+    assert_eq!(tokens[1].kind.token_type(), TokenType::Comment);
+}
+
+#[test]
+fn comment_inside_string_is_not_a_comment() {
+    let tokens = ok("\"// no\"");
+    assert_eq!(tokens.len(), 1);
+    assert_eq!(tokens[0].kind.token_type(), TokenType::StringLiteral);
+}

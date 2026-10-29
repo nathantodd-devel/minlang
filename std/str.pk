@@ -1,0 +1,184 @@
+//! Null-terminated strings and parsing numbers from them (C's `string.h`, `strings.h` and `stdlib.h`).
+
+namespace std::str {
+    /// Gets the length of a string.
+    /// @arg {text} the string
+    /// @returns the number of bytes before the terminator
+    pub extern "C" fn strlen(text: u8[?]) -> usize;
+
+    /// Gets the length of a string, up to a limit.
+    /// @arg {text} the string
+    /// @arg {limit} the most bytes to look at
+    /// @returns the length, or `limit` if there's no terminator before it
+    pub extern "C" fn strnlen(text: u8[?], limit: usize) -> usize;
+
+    /// Compares strings.
+    /// @arg {a} the first string
+    /// @arg {b} the second string
+    /// @returns negative, 0 or positive as `a` sorts before, equal to or after `b`
+    pub extern "C" fn strcmp(a: u8[?], b: u8[?]) -> s32;
+
+    /// Compares at most `limit` bytes of strings.
+    /// @arg {a} the first string
+    /// @arg {b} the second string
+    /// @arg {limit} the most bytes to compare
+    /// @returns negative, 0 or positive as `a` sorts before, equal to or after `b`
+    pub extern "C" fn strncmp(a: u8[?], b: u8[?], limit: usize) -> s32;
+
+    /// Compares strings, ignoring ASCII case.
+    /// @arg {a} the first string
+    /// @arg {b} the second string
+    /// @returns negative, 0 or positive as `a` sorts before, equal to or after `b`
+    pub extern "C" fn strcasecmp(a: u8[?], b: u8[?]) -> s32;
+
+    /// Compares at most `limit` bytes of strings, ignoring ASCII case.
+    /// @arg {a} the first string
+    /// @arg {b} the second string
+    /// @arg {limit} the most bytes to compare
+    /// @returns negative, 0 or positive as `a` sorts before, equal to or after `b`
+    pub extern "C" fn strncasecmp(a: u8[?], b: u8[?], limit: usize) -> s32;
+
+    /// Copies a string, with its terminator.
+    /// @arg {to} where to copy to; it must be big enough
+    /// @arg {from} the string to copy
+    /// @returns `to`
+    pub extern "C" fn strcpy(to: u8[?], from: u8[?]) -> u8[?];
+
+    /// Copies at most `limit` bytes of a string, padding with zeros. The copy isn't terminated if `from` is too long.
+    /// @arg {to} where to copy to
+    /// @arg {from} the string to copy
+    /// @arg {limit} how many bytes to write
+    /// @returns `to`
+    pub extern "C" fn strncpy(to: u8[?], from: u8[?], limit: usize) -> u8[?];
+
+    /// Appends a string to another.
+    /// @arg {to} the string to add to; it must have room
+    /// @arg {from} the string to add
+    /// @returns `to`
+    pub extern "C" fn strcat(to: u8[?], from: u8[?]) -> u8[?];
+
+    /// Appends at most `limit` bytes of a string, then a terminator.
+    /// @arg {to} the string to add to
+    /// @arg {from} the string to add
+    /// @arg {limit} the most bytes to add
+    /// @returns `to`
+    pub extern "C" fn strncat(to: u8[?], from: u8[?], limit: usize) -> u8[?];
+
+    /// Finds the first occurrence of a character.
+    /// @arg {text} the string to search
+    /// @arg {c} the character to find
+    /// @returns a pointer to it, or null if it's not there
+    pub extern "C" fn strchr(text: u8[?], c: s32) -> u8[?];
+
+    /// Finds the last occurrence of a character.
+    /// @arg {text} the string to search
+    /// @arg {c} the character to find
+    /// @returns a pointer to it, or null if it's not there
+    pub extern "C" fn strrchr(text: u8[?], c: s32) -> u8[?];
+
+    /// Finds the first occurrence of a string.
+    /// @arg {text} the string to search
+    /// @arg {needle} the string to find
+    /// @returns a pointer to it, or null if it's not there
+    pub extern "C" fn strstr(text: u8[?], needle: u8[?]) -> u8[?];
+
+    /// Finds the first of any of some characters.
+    /// @arg {text} the string to search
+    /// @arg {characters} the characters to find
+    /// @returns a pointer to it, or null if none are there
+    pub extern "C" fn strpbrk(text: u8[?], characters: u8[?]) -> u8[?];
+
+    /// Measures the start of a string made only of some characters.
+    /// @arg {text} the string
+    /// @arg {characters} the characters allowed
+    /// @returns its length
+    pub extern "C" fn strspn(text: u8[?], characters: u8[?]) -> usize;
+
+    /// Measures the start of a string made of none of some characters.
+    /// @arg {text} the string
+    /// @arg {characters} the characters to stop at
+    /// @returns its length
+    pub extern "C" fn strcspn(text: u8[?], characters: u8[?]) -> usize;
+
+    /// Splits a string into tokens, overwriting separators with terminators.
+    /// @arg {text} the string to split, or null to continue the last one
+    /// @arg {separators} the characters between tokens
+    /// @returns the next token, or null when there are none left
+    pub extern "C" fn strtok(text: u8[?], separators: u8[?]) -> u8[?];
+
+    /// Copies a string into newly allocated memory, to be freed with `std::mem::free`.
+    /// @arg {text} the string
+    /// @returns the copy, or null on error
+    pub extern "C" fn strdup(text: u8[?]) -> u8[?];
+
+    /// Copies at most `limit` bytes of a string into newly allocated memory.
+    /// @arg {text} the string
+    /// @arg {limit} the most bytes to copy
+    /// @returns the copy, or null on error
+    pub extern "C" fn strndup(text: u8[?], limit: usize) -> u8[?];
+
+    /// Describes an error number.
+    /// @arg {error} an error number, like `errno`'s
+    /// @returns the description
+    pub extern "C" fn strerror(error: s32) -> u8[?];
+
+    /// Parses a decimal integer.
+    /// @arg {text} the string
+    /// @returns the number, or 0 if there isn't one
+    pub extern "C" fn atoi(text: u8[?]) -> s32;
+
+    /// Parses a decimal integer.
+    /// @arg {text} the string
+    /// @returns the number, or 0 if there isn't one
+    pub extern "C" fn atol(text: u8[?]) -> s64;
+
+    /// Parses a decimal integer.
+    /// @arg {text} the string
+    /// @returns the number, or 0 if there isn't one
+    pub extern "C" fn atoll(text: u8[?]) -> s64;
+
+    /// Parses a floating point number.
+    /// @arg {text} the string
+    /// @returns the number, or 0 if there isn't one
+    pub extern "C" fn atof(text: u8[?]) -> f64;
+
+    /// Parses an integer in a base.
+    /// @arg {text} the string
+    /// @arg {end} where to store a pointer past the number, or null
+    /// @arg {base} 2 to 36, or 0 to read a 0x or 0 prefix
+    /// @returns the number, clamped to the range of `s64`
+    pub extern "C" fn strtol(text: u8[?], end: *void, base: s32) -> s64;
+
+    /// Parses an integer in a base.
+    /// @arg {text} the string
+    /// @arg {end} where to store a pointer past the number, or null
+    /// @arg {base} 2 to 36, or 0 to read a 0x or 0 prefix
+    /// @returns the number, clamped to the range of `s64`
+    pub extern "C" fn strtoll(text: u8[?], end: *void, base: s32) -> s64;
+
+    /// Parses an unsigned integer in a base.
+    /// @arg {text} the string
+    /// @arg {end} where to store a pointer past the number, or null
+    /// @arg {base} 2 to 36, or 0 to read a 0x or 0 prefix
+    /// @returns the number, clamped to the range of `u64`
+    pub extern "C" fn strtoul(text: u8[?], end: *void, base: s32) -> u64;
+
+    /// Parses an unsigned integer in a base.
+    /// @arg {text} the string
+    /// @arg {end} where to store a pointer past the number, or null
+    /// @arg {base} 2 to 36, or 0 to read a 0x or 0 prefix
+    /// @returns the number, clamped to the range of `u64`
+    pub extern "C" fn strtoull(text: u8[?], end: *void, base: s32) -> u64;
+
+    /// Parses a floating point number.
+    /// @arg {text} the string
+    /// @arg {end} where to store a pointer past the number, or null
+    /// @returns the number
+    pub extern "C" fn strtod(text: u8[?], end: *void) -> f64;
+
+    /// Parses a floating point number.
+    /// @arg {text} the string
+    /// @arg {end} where to store a pointer past the number, or null
+    /// @returns the number
+    pub extern "C" fn strtof(text: u8[?], end: *void) -> f32;
+}

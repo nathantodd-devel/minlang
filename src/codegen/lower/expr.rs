@@ -126,6 +126,8 @@ impl<'a> Lowerer<'a> {
             ExpressionKind::ImportExpression { .. }
             | ExpressionKind::StructDeclarationExpression { .. }
             | ExpressionKind::EnumDeclarationExpression { .. }
+            | ExpressionKind::NamespaceExpression { .. }
+            | ExpressionKind::ExternFunctionDeclarationExpression { .. }
             | ExpressionKind::TypeExpression { .. } => None,
             ExpressionKind::FunctionDeclarationExpression { .. } => {
                 self.pending.push(e);
@@ -780,46 +782,32 @@ impl<'a> Lowerer<'a> {
         match self.program.resolutions.get(&callee.id).cloned() {
             Some(Resolution::Function(id)) => {
                 let function = &self.program.functions[id];
-                let params = function.params.clone();
+                let ir_params: Vec<_> = function.params.iter().map(|ty| self.ir_type(ty)).collect();
                 let return_type = match &function.return_type {
                     Some(ty) => self.ir_type(ty),
                     None => IrType::Void,
                 };
                 let name = self.function_names[id].clone();
-                let args = args
-                    .iter()
-                    .zip(&params)
-                    .map(|(arg, param)| self.expr_as(arg, param))
-                    .collect();
-                self.call(return_type, Value::Global(name), args, None)
-            }
-            Some(Resolution::Builtin(function)) => {
-                let params: Vec<_> = function.params.iter().map(|ty| self.ir_type(ty)).collect();
-                let return_type = function
-                    .return_type
-                    .as_ref()
-                    .map_or(IrType::Void, |ty| self.ir_type(ty));
-                self.declare(
-                    function.name,
-                    return_type.clone(),
-                    params.clone(),
-                    function.variadic,
-                );
+                // Imported and `extern` functions are defined elsewhere
+                if function.module.is_some() || function.c_name.is_some() {
+                    self.declare(
+                        &name,
+                        return_type.clone(),
+                        ir_params.clone(),
+                        function.variadic,
+                    );
+                }
 
+                let params = function.params.clone();
                 let mut lowered = Vec::new();
                 for (index, arg) in args.iter().enumerate() {
-                    lowered.push(match function.params.get(index) {
+                    lowered.push(match params.get(index) {
                         Some(param) => self.expr_as(arg, param),
                         None => self.c_argument(arg),
                     });
                 }
-                let variadic = function.variadic.then_some(params);
-                self.call(
-                    return_type,
-                    Value::Global(function.name.to_owned()),
-                    lowered,
-                    variadic,
-                )
+                let variadic = function.variadic.then_some(ir_params);
+                self.call(return_type, Value::Global(name), lowered, variadic)
             }
             Some(Resolution::Variant { enum_id, index }) => {
                 let crate::checker::VariantShape::Tuple(types) =

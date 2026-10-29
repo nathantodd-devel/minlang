@@ -1,0 +1,47 @@
+//! Files and directories (C's `stdio.h`, `unistd.h` and `sys/stat.h`).
+
+namespace std::fs {
+    /// Deletes a file or an empty directory.
+    /// @arg {path} the file or empty directory
+    /// @returns 0, or -1 on error
+    pub extern "C" fn remove(path: u8[?]) -> s32;
+
+    /// Renames or moves a file.
+    /// @arg {from} the current path
+    /// @arg {to} the new path, replaced if it exists
+    /// @returns 0, or -1 on error
+    pub extern "C" fn rename(from: u8[?], to: u8[?]) -> s32;
+
+    /// Deletes a file.
+    /// @arg {path} the file
+    /// @returns 0, or -1 on error
+    pub extern "C" fn unlink(path: u8[?]) -> s32;
+
+    /// Checks whether a file exists or may be read, written or run.
+    /// @arg {path} the file
+    /// @arg {mode} F_OK (0) to check it exists, or R_OK (4), W_OK (2) and X_OK (1) or-ed together
+    /// @returns 0 if allowed, or -1
+    pub extern "C" fn access(path: u8[?], mode: s32) -> s32;
+
+    /// Gets the current working directory.
+    /// @arg {buffer} where to store the path
+    /// @arg {size} the size of `buffer`
+    /// @returns `buffer`, or null on error
+    pub extern "C" fn getcwd(buffer: u8[?], size: usize) -> u8[?];
+
+    /// Changes the current working directory.
+    /// @arg {path} the directory
+    /// @returns 0, or -1 on error
+    pub extern "C" fn chdir(path: u8[?]) -> s32;
+
+    /// Creates a directory.
+    /// @arg {path} the directory to create
+    /// @arg {mode} its permissions, like 0o755
+    /// @returns 0, or -1 on error
+    pub extern "C" fn mkdir(path: u8[?], mode: u32) -> s32;
+
+    /// Deletes an empty directory.
+    /// @arg {path} the directory
+    /// @returns 0, or -1 on error
+    pub extern "C" fn rmdir(path: u8[?]) -> s32;
+}

@@ -120,8 +120,8 @@ pub fn function(
     text
 }
 
-pub fn global(module: &str, name: &str) -> String {
-    format!("_Z{}", nested_name(module, &[], name))
+pub fn global(module: &str, path: &[String], name: &str) -> String {
+    format!("_Z{}", nested_name(module, path, name))
 }
 
 /// The function run before `main` to set globals whose values aren't
@@ -226,7 +226,11 @@ mod tests {
             ),
             "_ZN3geo1f2$21gEb"
         );
-        assert_eq!(global("geo", "counter"), "_ZN3geo7counterE");
+        assert_eq!(global("geo", &[], "counter"), "_ZN3geo7counterE");
+        assert_eq!(
+            global("geo", &["std".to_owned()], "counter"),
+            "_ZN3geo3std7counterE"
+        );
         assert_eq!(initializer("geo"), "_ZN3geo5$initEv");
         assert_eq!(
             type_name("geo", &["f".to_owned()], "Point"),

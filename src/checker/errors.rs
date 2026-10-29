@@ -41,6 +41,16 @@ pub enum CheckErrorKind {
     },
     /// `pub` on something other than a top-level declaration.
     MisplacedPub,
+    /// A `namespace` inside a function or block.
+    MisplacedNamespace,
+    /// An `import` inside a `namespace`.
+    ImportInNamespace,
+    /// `import std::io;`, where `std::io` is a namespace rather than an item.
+    NamespaceImport(String),
+    /// `extern "X"` for anything but `"C"`.
+    UnknownAbi(String),
+    /// `void` other than as `*void`.
+    BareVoid,
     /// `container` has no variant or member called `member`.
     UnknownMember {
         container: String,
@@ -168,6 +178,20 @@ impl fmt::Display for CheckErrorKind {
                 "'{name}' in '{module}' isn't public; declare it with 'pub' to import it"
             ),
             Self::MisplacedPub => f.write_str("'pub' is only allowed on top-level declarations"),
+            Self::MisplacedNamespace => f.write_str(
+                "'namespace' is only allowed at the top level or inside another namespace",
+            ),
+            Self::ImportInNamespace => {
+                f.write_str("'import' is only allowed outside of namespaces")
+            }
+            Self::NamespaceImport(namespace) => write!(
+                f,
+                "'{namespace}' is a namespace; use its items as '{namespace}::name', or import them with 'import {namespace}::*'"
+            ),
+            Self::UnknownAbi(abi) => {
+                write!(f, "Unknown ABI \"{abi}\"; only extern \"C\" is supported")
+            }
+            Self::BareVoid => f.write_str("'void' can only be pointed to, as '*void'"),
             Self::UnknownMember { container, member } => {
                 write!(f, "'{container}' has no member '{member}'")
             }
@@ -228,7 +252,7 @@ impl fmt::Display for CheckErrorKind {
                 Construct::At => "'@' outside of a 'let' initializer",
             }),
             Self::TopLevelStatement => f.write_str(
-                "Only declarations (import, fn, struct, enum, let, const) are allowed at the top level",
+                "Only declarations (import, namespace, fn, struct, enum, let, const) are allowed at the top level",
             ),
             Self::ConstantWithoutValue(name) => write!(f, "Constant '{name}' needs a value"),
             Self::AssignToConstant(name) => write!(f, "Cannot assign to constant '{name}'"),

@@ -157,3 +157,61 @@ fn f() {
           (iterator_type
             (reference_type
               (type_identifier))))))))
+
+================================================================================
+Namespaces
+================================================================================
+
+namespace std::mem {
+  pub fn copy() {}
+  namespace inner { const N = 1; }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (namespace_item
+    (scoped_identifier
+      (identifier)
+      (identifier))
+    (declaration_list
+      (function_item
+        (identifier)
+        (parameters)
+        (block))
+      (namespace_item
+        (identifier)
+        (declaration_list
+          (expression_statement
+            (let_declaration
+              (identifier)
+              (integer_literal))))))))
+
+================================================================================
+Extern functions
+================================================================================
+
+pub extern "C" fn printf(format: u8[?], ...) -> s32;
+extern "C" fn free(pointer: *void);
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (extern_function_item
+    (string_literal)
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (array_type
+          (primitive_type)))
+      (variadic_parameter))
+    (primitive_type))
+  (extern_function_item
+    (string_literal)
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (pointer_type
+          (type_identifier))))))

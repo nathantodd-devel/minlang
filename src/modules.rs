@@ -4,7 +4,12 @@
 //! `import shapes::geo;` names the module in `dir/shapes/geo.pk`: paths are
 //! relative to the importing file. Each file is checked once, after the files
 //! it imports, and the files that import it see only its `pub` items.
+//!
+//! The standard library is also files: every `.pk` file in the `std`
+//! directory shipped with the compiler. They're loaded once, and every file
+//! sees the `pub` items in their namespaces, like `std::io::printf`.
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -79,8 +84,100 @@ pub fn load_imports(path: &Path, ast: &Ast) -> Imported {
     }
 }
 
+/// The standard library, loaded from [`std_directory`].
+#[derive(Debug, Default)]
+pub struct Prelude {
+    /// Where it was found, or `None` if it wasn't.
+    pub directory: Option<PathBuf>,
+    /// Its files, and any they import, each after the files it imports.
+    pub files: Vec<SourceFile>,
+    /// What each of its files exports, for every file to merge into its
+    /// namespaces.
+    pub interfaces: Vec<Rc<Interface>>,
+}
+
+impl Prelude {
+    /// Whether `file` defines anything, so it has code to compile and link.
+    /// Files of only `extern` functions and types don't.
+    pub fn defines_code(file: &SourceFile) -> bool {
+        let mut defines = false;
+        walk(&file.ast, &mut |node| {
+            if let Node::Expression(expression) = node {
+                defines |= matches!(
+                    expression.kind,
+                    ExpressionKind::FunctionDeclarationExpression { .. }
+                        | ExpressionKind::LetExpression { .. }
+                );
+            }
+        });
+        defines
+    }
+}
+
+/// The directory holding the standard library: `$MINLANG_STD` if set (and
+/// `None` if that isn't a directory), else
+/// `lib/minlang/std` beside the `bin` directory holding the compiler (as
+/// installed), else `std` beside the compiler, else the source tree's (for
+/// development builds).
+pub fn std_directory() -> Option<PathBuf> {
+    if let Some(directory) = std::env::var_os("MINLANG_STD") {
+        return Some(PathBuf::from(directory)).filter(|directory| directory.is_dir());
+    }
+    let mut candidates = Vec::new();
+    if let Some(bin) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_owned))
+    {
+        candidates.push(bin.join("../lib/minlang/std"));
+        candidates.push(bin.join("std"));
+    }
+    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("std"));
+    candidates.into_iter().find(|directory| directory.is_dir())
+}
+
+thread_local! {
+    static PRELUDE: OnceCell<Rc<Prelude>> = const { OnceCell::new() };
+}
+
+/// The standard library, loaded on first use.
+pub fn prelude() -> Rc<Prelude> {
+    PRELUDE.with(|prelude| Rc::clone(prelude.get_or_init(|| Rc::new(load_prelude()))))
+}
+
+fn load_prelude() -> Prelude {
+    let Some(directory) = std_directory() else {
+        return Prelude::default();
+    };
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&directory)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| path.extension().is_some_and(|extension| extension == "pk"))
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+
+    let mut loader = Loader {
+        standard: true,
+        ..Loader::default()
+    };
+    let interfaces = paths
+        .iter()
+        .filter_map(|path| loader.load(path).ok())
+        .collect();
+    Prelude {
+        directory: Some(directory),
+        files: loader.files,
+        interfaces,
+    }
+}
+
 #[derive(Default)]
 struct Loader {
+    /// Whether it's loading the standard library, which is checked without
+    /// itself as a prelude.
+    standard: bool,
     files: Vec<SourceFile>,
     /// What each file loaded so far exports, by its canonical path.
     loaded: HashMap<PathBuf, Rc<Interface>>,
@@ -136,10 +233,15 @@ impl Loader {
     /// Tokenizes, parses and checks a file, after loading its imports.
     fn check(&mut self, path: &Path, source: String) -> SourceFile {
         let name = path.display().to_string();
+        let mut module = mangle::module_name(Some(&name));
+        if self.standard {
+            // So `std/io.pk` can't clash with a program's `io.pk`
+            module = format!("std_{module}");
+        }
         let mut file = SourceFile {
             path: path.to_owned(),
             source,
-            module: mangle::module_name(Some(&name)),
+            module,
             ast: Ast::new(),
             program: CheckedProgram::default(),
             errors: Vec::new(),
@@ -163,6 +265,9 @@ impl Loader {
 
         let imports = self.imports_of(path, &file.ast);
         let mut checker = Checker::new(Some(&name)).with_imports(imports);
+        if self.standard {
+            checker = checker.without_prelude();
+        }
         let (program, errors) = checker.check_partial(&file.ast);
         file.program = program;
         file.errors = formatted(&errors);

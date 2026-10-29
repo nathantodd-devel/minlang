@@ -24,6 +24,7 @@
 ; Functions
 
 (function_item name: (identifier) @function)
+(extern_function_item name: (identifier) @function)
 (call_expression
   function: (identifier) @function.call
   (#match? @function.call "^[a-z_]"))
@@ -46,6 +47,7 @@
 (enum_variant name: (identifier) @constructor)
 (variant_pattern variant: (identifier) @constructor)
 (struct_variant_pattern variant: (identifier) @constructor)
+(namespace_item name: (identifier) @module)
 (import_declaration path: (identifier) @module)
 
 ; Variables, parameters and fields
@@ -61,9 +63,9 @@
 
 ; Keywords
 
-["fn" "struct" "enum"] @keyword.type
+["fn" "struct" "enum" "namespace"] @keyword.type
 ["let" "const"] @keyword
-"pub" @keyword.modifier
+["pub" "extern"] @keyword.modifier
 "import" @keyword.import
 ["if" "else" "switch" "case" "default"] @keyword.conditional
 ["while" "loop" "do" "for" "in" (break_expression) (continue_expression)] @keyword.repeat

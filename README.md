@@ -12,7 +12,8 @@ and the Rust compiler that turns it into native executables through LLVM.
 `.pk` source files look roughly like this ([`examples/hello.pk`](examples/hello.pk)):
 
 ```rust
-import std::{printf, strcat};
+import std::io::printf;
+import std::str::strcat;
 import types::{*};
 
 fn main(argc: s32, argv: u8[?][?], envp: u8[?][?]) -> s32 {
@@ -161,9 +162,12 @@ block's last expression, if it has no trailing `;`, is the block's value.
 
 | Construct | Example |
 |---|---|
-| Import | `import std::printf;` `import std::{printf, strcat};` `import types::*;` `import geo;` (see [Modules](#modules)) |
+| Import | `import std::io::printf;` `import std::io::{printf, puts};` `import std::math::*;` `import geo;` (see [Modules](#modules)) |
+| Namespace | `namespace std::mem { fn copy() {} }`, used as `std::mem::copy()` (see [Namespaces](#namespaces)) |
+| Doc comment | `/// Adds two numbers.` on the lines above a declaration, field or variant |
 | Public | `pub fn` `pub struct` `pub enum` `pub let` `pub const`: other files can import it |
 | Function | `fn add(a: s32, b: s32) -> s32 { a + b }` (return type optional) |
+| C function | `extern "C" fn printf(format: u8[?], ...) -> s32;`: defined elsewhere, called by its unmangled name; `...` takes any further arguments |
 | Variable | `let x: u32 = 1;` `const y = 2.5;` (type and value optional) |
 | Struct | `struct Point { x: f32, y: f32 }`, built with `Point { x: 1.0, y: 2.0 }` |
 | Enum | `enum Color { Red, Green }` or `enum Flag: u8 { Read = 1, Write = 2 }`, used as `Color::Red` |
@@ -186,7 +190,7 @@ block's last expression, if it has no trailing `;`, is the block's value.
 | Literals | `42` `0xffu8` `2.5f32` `'a'` `'\n'` `"text"` `true` `false` |
 
 The built-in types are `u8` `u16` `u32` `u64` `usize` `s8` `s16` `s32` `s64`
-`f32` `f64` and `bool`; they need no import. Types are named (`s32`, `types::Foo`), pointers (`*T`), references (`&T`),
+`f32` `f64` and `bool`; they need no import. Types are named (`s32`, `types::Foo`), pointers (`*T`, or `*void` for any pointer), references (`&T`),
 iterators (`iter T`, returned by generators) or arrays (`T[N]`, or `T[?]` for
 unknown size). `iter` takes the whole type to its right, so `iter u8[4]` yields
 arrays; write `(iter u8)[4]` for an array of iterators. In a `let`, an array type may
@@ -229,7 +233,7 @@ its path relative to the importing file, with `::` between directories:
 
 ```rust
 // main.pk
-import std::printf;
+import std::io::printf;
 import shapes::geometry;                  // the module in shapes/geometry.pk
 import shapes::geometry::{Point, area};   // or items from it
 // import shapes::geometry::*;            // or all of its public items
@@ -248,7 +252,7 @@ items named in an `import` are visible. `import a::b;` imports the item `b`
 from `a.pk` if that file exists, and otherwise the module in `a/b.pk`. An item
 reached through two imports is the same item, so a `Point` from `geometry`
 passed through another module is still a `geometry::Point`. The built-in
-`std` and `types` take precedence over files with those names.
+`types` takes precedence over a file with that name.
 
 **Compiling.** Each file is checked once, after the files it imports, and the
 files importing it see only what its `pub` items look like. Each one compiles
@@ -276,6 +280,40 @@ server reads imported files from disk, so it sees their last saved contents.
 - A global set by code at startup (not to a constant) may not be set yet when
   another module's startup code reads it, since modules start up in link
   order.
+
+## Namespaces
+
+`namespace a::b { ... }` holds declarations that are reached from outside as
+`a::b::name`, as in C++. Inside it, its own names and those of the namespaces
+around it need no prefix, and a path may be relative to them: in `namespace
+a`, `b::name` means `a::b::name`.
+
+```rust
+namespace geo {
+    struct Point { x: s32, y: s32 }
+    namespace detail {
+        fn origin() -> Point { Point { x: 0, y: 0 } }
+    }
+}
+
+namespace geo {                       // reopened: the names merge
+    fn is_origin(p: Point) -> bool { p.x == detail::origin().x }
+}
+
+fn main() -> s32 { geo::is_origin(geo::detail::origin()) as s32 }
+```
+
+- Namespaces are global, as in C++: importing a file in any form
+  (`import lib;`, `import lib::{x}`) merges the `pub` items in its namespaces
+  into the namespaces of the same names, so `std::mem::copy` from `lib.pk` is
+  just `std::mem::copy`. A name declared twice, in one file or across files,
+  is an error.
+- `import std::io::printf;`, `import std::io::{printf, puts}` and
+  `import std::io::*` make a namespace's items usable by their bare names.
+- Namespaces can only appear at the top level or inside other namespaces, and
+  can't contain `import`s.
+- A namespaced item's symbol includes the namespace after the file's module:
+  `std::mem::copy` in `lib.pk` is `lib::std::mem::copy()`.
 
 ## Checking
 
@@ -331,7 +369,8 @@ Global variables start out zeroed, so they're always considered assigned.
 
 **Names and context** (checked as before):
 
-- Undefined names, including enum variants and members of `std` and `types`.
+- Undefined names, including enum variants and members of namespaces and
+  `types`.
   Functions, structs, enums and imports can be used before they're declared;
   `let` and `const` cannot.
 - Clashing declarations in one scope (shadowing in an inner block is fine),
@@ -345,16 +384,52 @@ Global variables start out zeroed, so they're always considered assigned.
 - A `case` that binds names can't be reached by falling through from the case
   before it.
 
-`std` is the C library: about 200 functions from `stdio.h`, `stdlib.h`,
-`string.h`, `ctype.h`, `math.h`, `unistd.h` and `time.h`, with their C
-signatures (see `LIBC` in `src/checker/builtins.rs`). `int` is `s32`, `long`
-is `s64`, `size_t` is `usize`, `double` is `f64` and `char *` is `u8[?]`.
-Other pointers (`void *`, `FILE *`, `char **`) are `*void`, which can't be
-written but accepts any pointer, reference or array, and converts to any
-`*T` or `T[?]`: `let numbers: s32[?] = malloc(32);`. A literal `0` passed as a
-`*void` is the null pointer: `time(0)`. Functions that take function pointers
-(`qsort`) or a `va_list` aren't included. Executables link libm. `types`
-contains the built-in types.
+`types` contains the built-in types.
+
+## Standard library
+
+The standard library is written in minlang: the `.pk` files in
+[`std/`](std). Each holds a namespace of `pub extern "C"` declarations of C
+library functions, documented with `///` comments that editors show on hover:
+
+```rust
+namespace std::mem {
+    /// Allocates memory, uninitialized.
+    /// @arg {size} allocation size
+    /// @returns a pointer to the allocated memory NULL on error
+    pub extern "C" fn malloc(size: usize) -> *void;
+}
+```
+
+| Namespace | What's in it |
+|---|---|
+| `std::io` | `printf` and the rest of `stdio.h`'s streams, and `read`/`write`/`open` on file descriptors |
+| `std::fs` | files and directories: `rename`, `unlink`, `mkdir`, `getcwd`… |
+| `std::mem` | `malloc`, `free`, `memcpy`, `memset`… |
+| `std::str` | `strlen`, `strcmp`, `strcat`…, and parsing numbers: `atoi`, `strtol`… |
+| `std::char` | `ctype.h`: `isdigit`, `toupper`… |
+| `std::math` | `math.h`, each with an `f32` version ending in `f`, and `abs`, `rand` |
+| `std::process` | `exit`, `abort`, `system`, `getenv`, `getpid`, `fork`… |
+| `std::time` | `time`, `clock`, `sleep`, `usleep` |
+
+**Every file sees all of it**, as a prelude: `std::mem::malloc(16)` needs no
+import, and `import std::mem::{malloc, free};` gives the bare names. A
+program's own `namespace std::mem { ... }` adds to it. Executables link libm.
+
+**C types:** `int` is `s32`, `long` is `s64`, `size_t` is `usize`, `double`
+is `f64` and `char *` is `u8[?]`. Other pointers (`void *`, `FILE *`,
+`char **`) are `*void`, which accepts any pointer, reference or array and
+converts to any `*T` or `T[?]`: `let numbers: s32[?] = malloc(32);`. A literal
+`0` passed as a `*void` is the null pointer: `time(0)`. The extra arguments of
+a variadic function are promoted as in C. Functions that take function
+pointers (`qsort`) or a `va_list` can't be declared yet.
+
+**Where it's found**, like a rustup toolchain's library: `$MINLANG_STD` if
+set, else `lib/minlang/std` beside the `bin` directory holding `minlang` (so
+install `bin/minlang` and `lib/minlang/std/*.pk` under one prefix), else a
+`std` directory beside `minlang`, else this repository's `std/` for
+development builds. The library's files are compiled into a program only if
+they define functions or globals; `extern` declarations need nothing linked.
 
 ## Code generation
 

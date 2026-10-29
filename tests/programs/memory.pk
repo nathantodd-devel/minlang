@@ -1,4 +1,5 @@
-import std::{printf, strcat};
+import std::io::printf;
+import std::str::strcat;
 
 struct Point {
     x: s32,

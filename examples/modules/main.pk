@@ -1,6 +1,6 @@
 // Imports name files relative to this one: `shapes::geometry` is
 // `shapes/geometry.pk`.
-import std::printf;
+import std::io::printf;
 import shapes::geometry;
 import shapes::geometry::{Point, Shape, area};
 

@@ -58,7 +58,9 @@ module.exports = grammar({
     _statement: ($) =>
       choice(
         $.import_declaration,
+        $.namespace_item,
         $.function_item,
+        $.extern_function_item,
         $.struct_item,
         $.enum_item,
         $.expression_statement,
@@ -85,6 +87,16 @@ module.exports = grammar({
 
     glob: (_) => '*',
 
+    // `namespace std::mem { ... }`
+    namespace_item: ($) =>
+      seq(
+        'namespace',
+        field('name', choice($.identifier, $.scoped_identifier)),
+        field('body', $.declaration_list),
+      ),
+
+    declaration_list: ($) => seq('{', repeat($._statement), '}'),
+
     function_item: ($) =>
       seq(
         // `pub` lets other files import it
@@ -96,7 +108,23 @@ module.exports = grammar({
         field('body', $.block),
       ),
 
-    parameters: ($) => seq('(', commaSep($.parameter), ')'),
+    // `extern "C" fn malloc(size: usize) -> *void;`, defined elsewhere
+    extern_function_item: ($) =>
+      seq(
+        optional('pub'),
+        'extern',
+        field('abi', $.string_literal),
+        'fn',
+        field('name', $.identifier),
+        field('parameters', $.parameters),
+        optional(seq('->', field('return_type', $._type))),
+        ';',
+      ),
+
+    // `...` (only in `extern` functions) takes any further arguments
+    parameters: ($) => seq('(', commaSep(choice($.parameter, $.variadic_parameter)), ')'),
+
+    variadic_parameter: (_) => '...',
 
     parameter: ($) => seq(field('name', $.identifier), ':', field('type', $._type)),
 

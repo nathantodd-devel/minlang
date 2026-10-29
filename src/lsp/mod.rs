@@ -501,6 +501,7 @@ fn document_symbol(symbol: analysis::Symbol, positions: &Positions) -> DocumentS
         name: symbol.name,
         detail: None,
         kind: match symbol.kind {
+            analysis::SymbolKind::Namespace => SymbolKind::NAMESPACE,
             analysis::SymbolKind::Function => SymbolKind::FUNCTION,
             analysis::SymbolKind::Struct => SymbolKind::STRUCT,
             analysis::SymbolKind::Enum => SymbolKind::ENUM,

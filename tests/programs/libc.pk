@@ -1,4 +1,11 @@
-import std::*;
+import std::char::*;
+import std::fs::*;
+import std::io::*;
+import std::math::*;
+import std::mem::*;
+import std::process::*;
+import std::str::*;
+import std::time::*;
 
 fn main() -> s32 {
     // `void *` converts to and from pointers and `T[?]`

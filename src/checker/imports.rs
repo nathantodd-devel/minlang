@@ -87,6 +87,7 @@ impl Checker {
             let names_item = !module.is_empty() && self.imports.contains_key(&module_path);
             if !names_item && self.imports.contains_key(&path) {
                 if let Some(interface) = self.load(&path, position) {
+                    self.merge_namespaces(&interface, position);
                     self.modules.insert(name.clone(), interface);
                 }
                 return;
@@ -106,9 +107,14 @@ impl Checker {
         let Some(interface) = self.load(&module_path, position) else {
             return;
         };
+        self.merge_namespaces(&interface, position);
         for name in imports {
             if name == "*" {
                 for (name, export) in interface.program.exports.clone() {
+                    // Namespaced items are reached through their namespace
+                    if name.contains("::") {
+                        continue;
+                    }
                     let symbol = self.import(&interface, export);
                     self.declare(&name, symbol, position);
                 }
@@ -121,6 +127,22 @@ impl Checker {
                 }
                 None => self.missing_export(&interface, &module_path, name, position),
             }
+        }
+    }
+
+    /// Adds the `pub` items in the namespaces of an imported file to this
+    /// file's namespaces of the same names, once per file.
+    pub(super) fn merge_namespaces(&mut self, interface: &Interface, position: Location) {
+        if !self.merged.insert(interface.module.clone()) {
+            return;
+        }
+        for (name, export) in interface.program.exports.clone() {
+            let mut path: Vec<String> = name.split("::").map(str::to_owned).collect();
+            let Some(name) = path.pop().filter(|_| !path.is_empty()) else {
+                continue;
+            };
+            let symbol = self.import(interface, export);
+            self.declare_in_namespace(&path, &name, symbol, position);
         }
     }
 
@@ -165,7 +187,7 @@ impl Checker {
     ) -> Option<Resolved> {
         if let Some(builtin) = builtins::module(module) {
             return match builtin.member(member) {
-                Some(member) => Some(Resolved::Symbol(member.into())),
+                Some(ty) => Some(Resolved::Symbol(Symbol::Primitive(ty))),
                 None => {
                     self.unknown_member(module, member, position);
                     None
@@ -337,7 +359,11 @@ impl Checker {
             module: Some(key.1),
             public: true,
             position: definition.position,
+            doc: definition.doc.clone(),
             params,
+            param_names: definition.param_names.clone(),
+            c_name: definition.c_name.clone(),
+            variadic: definition.variadic,
             param_variables: Vec::new(),
             return_type,
             declaration: usize::MAX,
@@ -347,7 +373,7 @@ impl Checker {
 
     fn import_variable(&mut self, from: &Interface, id: usize) -> usize {
         let info = &from.program.variables[id];
-        let key = Self::key(from, "let", &info.module, &Vec::new(), &info.name);
+        let key = Self::key(from, "let", &info.module, &info.path, &info.name);
         let local = self.program.variables.len();
         if let Some(existing) = self.imported_id(key.clone(), local) {
             return existing;
@@ -355,6 +381,7 @@ impl Checker {
         let ty = self.import_type(from, &info.ty);
         self.program.variables.push(VariableInfo {
             name: info.name.clone(),
+            path: info.path.clone(),
             position: info.position,
             ty,
             constant: info.constant,

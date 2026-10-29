@@ -196,7 +196,7 @@ const GEO: &str = "pub struct Point { x: s32, y: s32 }
 pub fn add(a: Point, b: Point) -> Point { Point { x: a.x + b.x, y: a.y + b.y } }
 ";
 
-const MAIN: &str = "import std::printf;
+const MAIN: &str = "import std::io::printf;
 import shapes::geo;
 
 fn main() -> s32 {
@@ -205,6 +205,21 @@ fn main() -> s32 {
     0
 }
 ";
+
+#[test]
+fn a_missing_standard_library_is_reported() {
+    let output = Command::new(env!("CARGO_BIN_EXE_minlang"))
+        .args(["check", "examples/basic.pk"])
+        .env("MINLANG_STD", "/nonexistent/std")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        stderr(&output).contains("could not find the standard library"),
+        "{}",
+        stderr(&output)
+    );
+}
 
 #[test]
 fn run_links_imported_files() {

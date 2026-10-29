@@ -8,7 +8,7 @@ use clap::{Parser as ArgParser, Subcommand, ValueEnum};
 
 use minlang::codegen::{self, Backend, TextBackend, mangle};
 use minlang::diagnostic::Renderer;
-use minlang::modules::{self, Imported};
+use minlang::modules::{self, Imported, Prelude};
 use minlang::{Ast, CheckedProgram, Checker, GenericError, Parser, TokenStream, Tokenizer};
 
 /// The compiler for minlang, a small C-like language.
@@ -211,8 +211,14 @@ impl Session {
         let imported = self.timed("Loading imports", || {
             modules::load_imports(&self.path, &ast)
         });
+        let prelude = self.timed("Loading the standard library", modules::prelude);
+        if prelude.directory.is_none() {
+            return Err(self.fail(
+                "could not find the standard library; set MINLANG_STD to its `std` directory",
+            ));
+        }
         let mut failed = None;
-        for file in &imported.files {
+        for file in prelude.files.iter().chain(&imported.files) {
             if !file.errors.is_empty() {
                 failed = Some(self.report_file(&file.name(), &file.source, &file.errors));
             }
@@ -269,7 +275,12 @@ impl Session {
                 self.lower(&self.file, &checked.ast, &checked.program)?,
             )];
             if !object {
-                for file in &checked.imported.files {
+                let prelude = modules::prelude();
+                let standard = prelude
+                    .files
+                    .iter()
+                    .filter(|file| Prelude::defines_code(file));
+                for file in standard.chain(&checked.imported.files) {
                     let ir = self.lower(&file.name(), &file.ast, &file.program)?;
                     modules.push((file.module.clone(), ir));
                 }

@@ -1,4 +1,4 @@
-import std::printf;
+import std::io::printf;
 
 fn main() -> s32 {
     // Float to integer saturates

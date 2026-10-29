@@ -83,13 +83,14 @@ use modifiers::{DECLARATION, DEFAULT_LIBRARY, READONLY};
 pub enum Target {
     Variable(usize),
     Function(usize),
-    Builtin(String),
     Struct(usize),
     Enum(usize),
     Variant(usize, usize),
     Field(usize, String),
     Primitive(String),
     Module(String),
+    /// A namespace, by its full path.
+    Namespace(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +113,7 @@ pub struct SemanticToken {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolKind {
+    Namespace,
     Function,
     Struct,
     Enum,
@@ -191,12 +193,14 @@ pub fn analyze(source: &str, file: Option<&str>) -> Analysis {
     }
 
     // The parser recovers from errors, so even a broken document has a tree
-    let mut parser = Parser::new(tokens.clone(), file);
+    let mut parser = Parser::new(tokens, file);
     let parsed = parser.parse().is_ok();
     for error in &parser.errors {
         report(error.line, error.column, error.message());
     }
     let ast = parser.node.clone();
+    // Without comments, so the AST's token ranges index into it
+    let tokens = std::mem::take(&mut parser.tokens);
 
     // Imported files are read from disk, as last saved
     let imports = file
@@ -314,28 +318,17 @@ impl Analysis {
                 self.bind(last, class, modifiers, Some(Target::Variable(*variable)));
             }
             Some(Resolution::Function(function)) => {
+                let modifiers = self.library_modifier(*function);
                 self.bind(
                     last,
                     TokenClass::Function,
-                    0,
+                    modifiers,
                     Some(Target::Function(*function)),
                 );
             }
-            Some(Resolution::Builtin(function)) => {
-                for &index in prefix {
-                    let module = self.tokens[index].raw.clone();
-                    self.bind(
-                        index,
-                        TokenClass::Namespace,
-                        0,
-                        Some(Target::Module(module)),
-                    );
-                }
-                let target = Target::Builtin(function.name.to_owned());
-                self.bind(last, TokenClass::Function, DEFAULT_LIBRARY, Some(target));
-            }
             Some(&Resolution::Variant { enum_id, index }) => {
-                for &token in prefix {
+                // Any segments before the enum's are namespaces or a module
+                if let Some(&token) = prefix.last() {
                     self.bind(token, TokenClass::Enum, 0, Some(Target::Enum(enum_id)));
                 }
                 self.bind(
@@ -409,7 +402,8 @@ impl Analysis {
                     | Punctuation::Dot => continue,
                     _ => TokenClass::Operator,
                 },
-                TokenKind::Identifier { .. } => continue,
+                // The parser sets comments aside, so they never get here
+                TokenKind::Identifier { .. } | TokenKind::Comment { .. } => continue,
             };
             self.set(index, class, 0);
         }
@@ -454,6 +448,9 @@ impl Analysis {
                 self.bind(index, TokenClass::Enum, 0, Some(Target::Enum(id)));
             } else if after_namespace && module_members(&name).is_some() {
                 self.bind(index, TokenClass::Namespace, 0, Some(Target::Module(name)));
+            } else if after_namespace {
+                // A namespace, or an imported file's module
+                self.set(index, TokenClass::Namespace, 0);
             } else if is_symbol(self.tokens.get(index.wrapping_sub(1)), Punctuation::Dot) {
                 self.set(index, TokenClass::Property, 0);
             }
@@ -485,6 +482,11 @@ impl Analysis {
                         {
                             let target = variables.get(position).copied().map(Target::Variable);
                             self.bind(index, TokenClass::Parameter, DECLARATION, target);
+                        }
+                    }
+                    ExpressionKind::NamespaceExpression { .. } => {
+                        for index in self.path_tokens(start + 1) {
+                            self.set(index, TokenClass::Namespace, DECLARATION);
                         }
                     }
                     ExpressionKind::LetExpression { constant, .. } => {
@@ -624,19 +626,22 @@ impl Analysis {
                             .map(Target::Variable);
                         self.bind(binding, TokenClass::Variable, DECLARATION, target);
                     }
-                    ExpressionKind::ImportExpression { .. } => {
+                    ExpressionKind::ImportExpression { module, .. } => {
+                        let mut path = Vec::new();
                         for index in start..e.tokens.end {
                             let TokenKind::Identifier { name } = &self.tokens[index].kind else {
                                 continue;
                             };
                             let name = name.clone();
                             if is_symbol(self.tokens.get(index + 1), Punctuation::Namespace) {
-                                self.bind(
-                                    index,
-                                    TokenClass::Namespace,
-                                    0,
-                                    Some(Target::Module(name)),
-                                );
+                                path.push(name.clone());
+                                let target =
+                                    if self.program.namespaces.contains_key(&path.join("::")) {
+                                        Target::Namespace(path.join("::"))
+                                    } else {
+                                        Target::Module(name)
+                                    };
+                                self.bind(index, TokenClass::Namespace, 0, Some(target));
                             } else if is_primitive(&name) {
                                 self.bind(
                                     index,
@@ -644,13 +649,14 @@ impl Analysis {
                                     DEFAULT_LIBRARY,
                                     Some(Target::Primitive(name)),
                                 );
-                            } else {
-                                self.bind(
-                                    index,
-                                    TokenClass::Function,
-                                    DEFAULT_LIBRARY,
-                                    Some(Target::Builtin(name)),
-                                );
+                            } else if let Some(id) =
+                                self.program.functions.iter().position(|function| {
+                                    function.name == name && function.path == *module
+                                })
+                            {
+                                let modifiers = self.library_modifier(id);
+                                let target = Some(Target::Function(id));
+                                self.bind(index, TokenClass::Function, modifiers, target);
                             }
                         }
                     }
@@ -776,17 +782,39 @@ impl Analysis {
             .is_some_and(|target| self.declarations.contains_key(target))
     }
 
+    /// `DEFAULT_LIBRARY` for a function from the standard library.
+    fn library_modifier(&self, function: usize) -> u32 {
+        let module = self.program.functions[function].module.as_deref();
+        if module.is_some_and(|module| module.starts_with("std_")) {
+            DEFAULT_LIBRARY
+        } else {
+            0
+        }
+    }
+
     fn signature(&self, function: usize) -> String {
         let definition = &self.program.functions[function];
-        let params: Vec<_> = definition
-            .param_variables
+        let mut params: Vec<_> = definition
+            .param_names
             .iter()
-            .map(|&variable| {
-                let info = &self.program.variables[variable];
-                format!("{}: {}", info.name, self.program.type_name(&info.ty))
-            })
+            .zip(&definition.params)
+            .map(|(name, ty)| format!("{name}: {}", self.program.type_name(ty)))
             .collect();
-        let mut text = format!("fn {}({})", definition.name, params.join(", "));
+        if definition.variadic {
+            params.push("...".to_owned());
+        }
+        let prefix = if definition.c_name.is_some() {
+            "extern \"C\" fn"
+        } else {
+            "fn"
+        };
+        let mut name = definition.path.clone();
+        name.push(definition.name.clone());
+        // Within functions, the path is theirs; only namespaces qualify names
+        if definition.declaration != usize::MAX && definition.module.is_none() {
+            name = vec![definition.name.clone()];
+        }
+        let mut text = format!("{prefix} {}({})", name.join("::"), params.join(", "));
         if let Some(return_type) = &definition.return_type {
             text.push_str(&format!(" -> {}", self.program.type_name(return_type)));
         }
@@ -819,36 +847,6 @@ impl Analysis {
                 format!("{keyword} {}: {}", info.name, program.type_name(&info.ty))
             }
             Target::Function(function) => self.signature(*function),
-            Target::Builtin(name) => {
-                let resolved =
-                    program
-                        .resolutions
-                        .values()
-                        .find_map(|resolution| match resolution {
-                            Resolution::Builtin(function) if function.name == name => {
-                                Some(function)
-                            }
-                            _ => None,
-                        });
-                match resolved {
-                    Some(function) => {
-                        let mut params: Vec<_> = function
-                            .params
-                            .iter()
-                            .map(|ty| program.type_name(ty))
-                            .collect();
-                        if function.variadic {
-                            params.push("...".to_owned());
-                        }
-                        let mut text = format!("fn {name}({})", params.join(", "));
-                        if let Some(return_type) = &function.return_type {
-                            text.push_str(&format!(" -> {}", program.type_name(return_type)));
-                        }
-                        text
-                    }
-                    None => format!("fn {name}"),
-                }
-            }
             Target::Struct(id) => {
                 let definition = &program.structs[*id];
                 let fields: Vec<_> = definition
@@ -896,6 +894,7 @@ impl Analysis {
             }
             Target::Primitive(name) => format!("{name} (built-in type)"),
             Target::Module(name) => format!("module {name}"),
+            Target::Namespace(path) => format!("namespace {path}"),
         }
     }
 
@@ -903,7 +902,14 @@ impl Analysis {
     /// name, or the type of an expression.
     pub fn hover(&self, line: usize, column: usize) -> Option<String> {
         if let Some(target) = self.target_at(line, column) {
-            return Some(format!("```minlang\n{}\n```", self.describe(target)));
+            let mut text = format!("```minlang\n{}\n```", self.describe(target));
+            if let Target::Function(function) = target
+                && let Some(doc) = &self.program.functions[*function].doc
+            {
+                text.push_str("\n\n");
+                text.push_str(&doc_markdown(doc));
+            }
+            return Some(text);
         }
 
         // Otherwise the type of the smallest expression around the token
@@ -925,7 +931,8 @@ impl Analysis {
         Some(format!("```minlang\n{}\n```", self.program.type_name(ty)))
     }
 
-    /// The document's outline: its functions, structs, enums and globals.
+    /// The document's outline: its namespaces, functions, structs, enums and
+    /// globals.
     pub fn symbols(&self) -> Vec<Symbol> {
         let mut symbols = Vec::new();
         for item in &self.ast {
@@ -945,7 +952,7 @@ impl Analysis {
         if !is_identifier(self.tokens.get(name_token)) {
             return None;
         }
-        let name = self.tokens[name_token].raw.clone();
+        let mut name = self.tokens[name_token].raw.clone();
         let selection = self.token_range(name_token);
 
         let member = |index: usize, kind| Symbol {
@@ -974,6 +981,11 @@ impl Analysis {
         };
 
         let (kind, children) = match &item.kind {
+            ExpressionKind::NamespaceExpression { path, items, .. } => {
+                name = path.join("::");
+                let items = items.iter().filter_map(|item| self.symbol(item)).collect();
+                (SymbolKind::Namespace, items)
+            }
             ExpressionKind::FunctionDeclarationExpression { body, .. } => {
                 let nested = body
                     .body
@@ -1044,7 +1056,19 @@ impl Analysis {
 
         if let Some(anchor) = anchor {
             if is_symbol(self.tokens.get(anchor), Punctuation::Namespace) && anchor > 0 {
-                return self.namespace_members(&self.tokens[anchor - 1].raw);
+                // The whole path before the `::`, like `std::io`
+                let mut start = anchor - 1;
+                while start >= 2
+                    && is_symbol(self.tokens.get(start - 1), Punctuation::Namespace)
+                    && is_identifier(self.tokens.get(start - 2))
+                {
+                    start -= 2;
+                }
+                let path: Vec<_> = (start..anchor)
+                    .step_by(2)
+                    .map(|index| self.tokens[index].raw.as_str())
+                    .collect();
+                return self.namespace_members(&path.join("::"));
             }
             if is_symbol(self.tokens.get(anchor), Punctuation::Dot) && anchor > 0 {
                 return self.fields_of(anchor - 1);
@@ -1066,14 +1090,25 @@ impl Analysis {
                 detail: None,
             });
         }
-        for module in ["std", "types"] {
-            completions.push(Completion {
-                label: module.to_owned(),
-                kind: CompletionKind::Module,
-                detail: None,
-            });
+        completions.push(Completion {
+            label: "types".to_owned(),
+            kind: CompletionKind::Module,
+            detail: None,
+        });
+        for path in self.program.namespaces.keys() {
+            if !path.contains("::") {
+                completions.push(Completion {
+                    label: path.clone(),
+                    kind: CompletionKind::Module,
+                    detail: Some(format!("namespace {path}")),
+                });
+            }
         }
         for (id, function) in self.program.functions.iter().enumerate() {
+            // Those in another file's namespaces are reached through them
+            if function.module.is_some() && !function.path.is_empty() {
+                continue;
+            }
             completions.push(Completion {
                 label: function.name.clone(),
                 kind: CompletionKind::Function,
@@ -1140,6 +1175,34 @@ impl Analysis {
                 })
                 .collect();
         }
+        if let Some(members) = self.program.namespaces.get(name) {
+            return members
+                .iter()
+                .map(|member| {
+                    let path = format!("{name}::{member}");
+                    let function = self.program.functions.iter().position(|function| {
+                        function.name == *member && function.path.join("::") == name
+                    });
+                    match function {
+                        Some(id) => Completion {
+                            label: member.clone(),
+                            kind: CompletionKind::Function,
+                            detail: Some(self.signature(id)),
+                        },
+                        None if self.program.namespaces.contains_key(&path) => Completion {
+                            label: member.clone(),
+                            kind: CompletionKind::Module,
+                            detail: Some(format!("namespace {path}")),
+                        },
+                        None => Completion {
+                            label: member.clone(),
+                            kind: CompletionKind::Type,
+                            detail: None,
+                        },
+                    }
+                })
+                .collect();
+        }
         module_members(name)
             .unwrap_or_default()
             .into_iter()
@@ -1196,4 +1259,39 @@ impl Analysis {
             })
             .collect()
     }
+}
+
+/// A doc comment as Markdown. Tags like `@arg {size} the size` each get a
+/// paragraph, with the name in code.
+fn doc_markdown(doc: &str) -> String {
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut text = String::new();
+    for line in doc.lines() {
+        let line = line.trim();
+        if let Some(tag) = line.strip_prefix('@') {
+            if !text.is_empty() {
+                paragraphs.push(std::mem::take(&mut text));
+            }
+            let (name, rest) = tag.split_once(' ').unwrap_or((tag, ""));
+            let rest = rest.trim();
+            let rest = match rest.strip_prefix('{').and_then(|rest| rest.split_once('}')) {
+                Some((argument, rest)) => format!("`{argument}` {}", rest.trim()),
+                None => rest.to_owned(),
+            };
+            paragraphs.push(format!("*@{name}* {rest}").trim_end().to_owned());
+        } else if line.is_empty() {
+            if !text.is_empty() {
+                paragraphs.push(std::mem::take(&mut text));
+            }
+        } else {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(line);
+        }
+    }
+    if !text.is_empty() {
+        paragraphs.push(text);
+    }
+    paragraphs.join("\n\n")
 }

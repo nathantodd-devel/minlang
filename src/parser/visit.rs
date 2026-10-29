@@ -92,6 +92,18 @@ fn walk_expression<'a>(expression: &'a Expression, visit: &mut impl FnMut(Node<'
             }
             walk_block(body, visit);
         }
+        ExpressionKind::ExternFunctionDeclarationExpression {
+            params,
+            return_type,
+            ..
+        } => {
+            for param in params {
+                walk_type(&param.r#type, visit);
+            }
+            if let Some(return_type) = return_type {
+                walk_type(return_type, visit);
+            }
+        }
         ExpressionKind::LetExpression {
             typeinfo, value, ..
         } => {
@@ -134,6 +146,7 @@ fn walk_expression<'a>(expression: &'a Expression, visit: &mut impl FnMut(Node<'
                 }
             }
         }
+        ExpressionKind::NamespaceExpression { items, .. } => walk(items, visit),
         ExpressionKind::StructLiteralExpression { fields, .. } => {
             for field in fields {
                 each(&field.value);

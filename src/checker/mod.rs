@@ -8,8 +8,6 @@ mod errors;
 mod imports;
 mod types;
 
-pub use builtins::BuiltinFunction;
-
 /// The members of a built-in module, like `std`, for editor completion.
 pub fn module_members(name: &str) -> Option<Vec<&'static str>> {
     builtins::module(name).map(builtins::Module::members)
@@ -23,12 +21,12 @@ pub use errors::*;
 pub use imports::{Imports, Interface};
 pub use types::{IntType, Type};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use num_bigint::BigInt;
 
-use builtins::{BuiltinMember, PRIMITIVES};
+use builtins::PRIMITIVES;
 use types::{array_compatible, common_numeric};
 
 use crate::parser::{
@@ -105,7 +103,15 @@ pub struct FunctionDef {
     /// Declared `pub`, so other files can call it.
     pub public: bool,
     pub position: Location,
+    /// The `///` comment above it.
+    pub doc: Option<String>,
     pub params: Vec<Type>,
+    pub param_names: Vec<String>,
+    /// For an `extern "C"` function, its symbol: its name, unmangled. It has
+    /// no body; the C library or another object file defines it.
+    pub c_name: Option<String>,
+    /// Whether more arguments may follow `params`, like `printf`'s.
+    pub variadic: bool,
     /// The variables holding the parameters inside the body. Empty for
     /// imported functions.
     pub param_variables: Vec<usize>,
@@ -128,6 +134,8 @@ impl FunctionDef {
 #[derive(Debug, Clone)]
 pub struct VariableInfo {
     pub name: String,
+    /// For a global, the namespace it's declared in; otherwise empty.
+    pub path: ItemPath,
     /// Where it's declared: its `let`, parameter list, loop or pattern.
     pub position: Location,
     pub ty: Type,
@@ -155,7 +163,6 @@ pub enum Export {
 pub enum Resolution {
     Variable(usize),
     Function(usize),
-    Builtin(BuiltinFunction),
     Variant { enum_id: usize, index: usize },
     Struct(usize),
 }
@@ -182,8 +189,12 @@ pub struct CheckedProgram {
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
     pub functions: Vec<FunctionDef>,
-    /// The `pub` items, by name, in the order they're declared.
+    /// The `pub` items, by name, in the order they're declared. Items in a
+    /// namespace are named with its path, like `std::mem::copy`.
     pub exports: Vec<(String, Export)>,
+    /// The names in each namespace, including the standard library's and
+    /// nested namespaces', by its path, for editor completion.
+    pub namespaces: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,19 +210,9 @@ struct Variable {
 enum Symbol {
     Variable(Variable),
     Function(usize),
-    BuiltinFunction(BuiltinFunction),
     Struct(usize),
     Enum(usize),
     Primitive(Type),
-}
-
-impl From<BuiltinMember> for Symbol {
-    fn from(member: BuiltinMember) -> Self {
-        match member {
-            BuiltinMember::Function(function) => Symbol::BuiltinFunction(function),
-            BuiltinMember::Type(ty) => Symbol::Primitive(ty),
-        }
-    }
 }
 
 /// What a name or `a::b` path refers to.
@@ -235,6 +236,14 @@ fn meet(a: Assigned, b: Assigned) -> Assigned {
         (None, other) | (other, None) => other,
         (Some(a), Some(b)) => Some(a.intersection(&b).copied().collect()),
     }
+}
+
+/// A function, struct or enum found by `declare_items`, whose signature is
+/// resolved once every name is declared.
+enum Item<'a> {
+    Struct(&'a Expression, usize),
+    Enum(&'a Expression, usize),
+    Function(&'a Expression, usize),
 }
 
 /// Something `break` can leave: a loop, `do` or `switch`.
@@ -269,6 +278,9 @@ struct Context {
 
 pub struct Checker {
     filename: Option<String>,
+    /// Whether the file sees the standard library's namespaces. Its own files
+    /// don't.
+    use_prelude: bool,
     /// The files this one may import.
     imports: Imports,
     /// Imported file modules, usable as `name::member`.
@@ -277,6 +289,14 @@ pub struct Checker {
     /// two imports is one item.
     imported: HashMap<imports::ItemKey, usize>,
     scopes: Vec<HashMap<String, Symbol>>,
+    /// What each namespace holds, by its full path, including the namespaces
+    /// merged from imported files. Every prefix of a namespace is one too.
+    namespaces: HashMap<ItemPath, HashMap<String, Symbol>>,
+    /// The full path of the namespace being declared or checked. Each of its
+    /// segments has a scope after the file's, holding that namespace's names.
+    namespace: ItemPath,
+    /// The imported files whose namespaces have been merged.
+    merged: HashSet<String>,
     context: Context,
     assigned: Assigned,
     program: CheckedProgram,
@@ -301,10 +321,14 @@ impl Checker {
 
         Self {
             filename: filename.map(str::to_owned),
+            use_prelude: true,
             imports: Imports::new(),
             modules: HashMap::new(),
             imported: HashMap::new(),
             scopes: vec![prelude],
+            namespaces: HashMap::new(),
+            namespace: Vec::new(),
+            merged: HashSet::new(),
             context: Context::default(),
             assigned: Some(HashSet::new()),
             program: CheckedProgram::default(),
@@ -318,6 +342,12 @@ impl Checker {
     /// Lets the checked file import the file modules in `imports`.
     pub fn with_imports(mut self, imports: Imports) -> Self {
         self.imports = imports;
+        self
+    }
+
+    /// Leaves out the standard library, for checking its own files.
+    pub fn without_prelude(mut self) -> Self {
+        self.use_prelude = false;
         self
     }
 
@@ -335,23 +365,52 @@ impl Checker {
     pub fn check_partial(&mut self, ast: &Ast) -> (CheckedProgram, Vec<CheckError>) {
         let filename = self.filename.take();
         let imports = std::mem::take(&mut self.imports);
+        let use_prelude = self.use_prelude;
         *self = Self::new(filename.as_deref()).with_imports(imports);
+        self.use_prelude = use_prelude;
 
         self.scopes.push(HashMap::new());
-        self.declare_items(ast);
-
-        for expression in ast {
-            if is_declaration(&expression.kind) {
-                self.check_expression(expression);
-            } else {
-                self.error(CheckErrorKind::TopLevelStatement, expression.position);
+        if use_prelude {
+            let start = crate::parser::Position { line: 0, col: 0 };
+            for interface in &crate::modules::prelude().interfaces {
+                self.merge_namespaces(interface, Location { start, end: start });
             }
         }
+        self.declare_items(ast);
+        self.check_items(ast);
+
+        self.program.namespaces = self
+            .namespaces
+            .iter()
+            .map(|(path, names)| {
+                let mut members: Vec<String> = names.keys().cloned().collect();
+                // Nested namespaces are members too
+                members.extend(
+                    self.namespaces
+                        .keys()
+                        .filter(|other| other.len() == path.len() + 1 && other.starts_with(path))
+                        .map(|other| other[path.len()].clone()),
+                );
+                members.sort();
+                (path.join("::"), members)
+            })
+            .collect();
 
         (
             std::mem::take(&mut self.program),
             std::mem::take(&mut self.errors),
         )
+    }
+
+    /// Checks the declarations at the top level or in a namespace.
+    fn check_items(&mut self, items: &[Expression]) {
+        for item in items {
+            if is_declaration(&item.kind) {
+                self.check_expression(item);
+            } else {
+                self.error(CheckErrorKind::TopLevelStatement, item.position);
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -367,9 +426,20 @@ impl Checker {
         ));
     }
 
+    /// Declares `name` in the current scope, and in the current namespace if
+    /// that's where the declaration is.
     fn declare(&mut self, name: &str, symbol: Symbol, position: Location) {
-        let scope = self.scopes.last().expect("a scope is always open");
-        if scope.contains_key(name) {
+        if !self.namespace.is_empty() && self.at_top_level() {
+            let namespace = self.namespace.clone();
+            if !self.declare_in_namespace(&namespace, name, symbol.clone(), position) {
+                return;
+            }
+        } else if self
+            .scopes
+            .last()
+            .expect("a scope is always open")
+            .contains_key(name)
+        {
             self.error(CheckErrorKind::Redeclared(name.to_owned()), position);
             return;
         }
@@ -377,6 +447,51 @@ impl Checker {
             .last_mut()
             .expect("a scope is always open")
             .insert(name.to_owned(), symbol);
+    }
+
+    /// Adds `name` to the namespace at `path`, creating it and its prefixes
+    /// if need be. Returns `false` after reporting an error if it's taken.
+    fn declare_in_namespace(
+        &mut self,
+        path: &[String],
+        name: &str,
+        symbol: Symbol,
+        position: Location,
+    ) -> bool {
+        for length in 1..path.len() {
+            self.namespaces.entry(path[..length].to_vec()).or_default();
+        }
+        let namespace = self.namespaces.entry(path.to_vec()).or_default();
+        if namespace.contains_key(name) {
+            let name = format!("{}::{name}", path.join("::"));
+            self.error(CheckErrorKind::Redeclared(name), position);
+            return false;
+        }
+        namespace.insert(name.to_owned(), symbol);
+        true
+    }
+
+    /// Runs `check` inside the namespace at the full `path`, with the scopes
+    /// of each namespace from the outermost in, so its names and those of the
+    /// namespaces around it are visible. Only valid at the top level.
+    fn with_namespace<T>(&mut self, path: &[String], check: impl FnOnce(&mut Self) -> T) -> T {
+        let base = self.scopes.len() - self.namespace.len();
+        let outer_scopes = self.scopes.split_off(base);
+        for length in 1..=path.len() {
+            let scope = self.namespaces.entry(path[..length].to_vec()).or_default();
+            self.scopes.push(scope.clone());
+        }
+        let outer_namespace = std::mem::replace(&mut self.namespace, path.to_vec());
+        // Items in the namespace are named after it in generated code
+        let outer_path = std::mem::replace(&mut self.function_path, path.to_vec());
+
+        let result = check(self);
+
+        self.scopes.truncate(base);
+        self.scopes.extend(outer_scopes);
+        self.namespace = outer_namespace;
+        self.function_path = outer_path;
+        result
     }
 
     fn lookup(&self, name: &str) -> Option<Symbol> {
@@ -416,34 +531,81 @@ impl Checker {
     }
 
     /// Declares the functions, structs, enums and imports among `items` up
-    /// front, so they can be used before the point where they're declared.
-    /// Names are declared first, so declarations can refer to each other.
-    fn declare_items<'a>(&mut self, items: impl IntoIterator<Item = &'a Expression> + Clone) {
-        let mut structs = Vec::new();
-        let mut enums = Vec::new();
-        let mut functions = Vec::new();
+    /// front, so they can be used before the point where they're declared,
+    /// including those in namespaces. Names are declared first, so
+    /// declarations can refer to each other.
+    fn declare_items<'a>(&mut self, items: impl IntoIterator<Item = &'a Expression>) {
+        let items: Vec<&Expression> = items.into_iter().collect();
 
-        for item in items.clone() {
+        // Imports first, so a declaration clashing with one is what's
+        // reported, except those naming a namespace declared here, which wait
+        // for its names
+        let mut local = HashSet::new();
+        local_namespaces(&items, &mut Vec::new(), &mut local);
+        let mut waiting = Vec::new();
+        for item in &items {
+            if let ExpressionKind::ImportExpression { module, imports } = &item.kind {
+                if local.contains(module) {
+                    waiting.push(*item);
+                } else {
+                    self.declare_import(module, imports, item.position);
+                }
+            }
+        }
+
+        let mut declared = Vec::new();
+        self.declare_names(items, &mut declared);
+        for item in waiting {
+            if let ExpressionKind::ImportExpression { module, imports } = &item.kind {
+                self.declare_import(module, imports, item.position);
+            }
+        }
+
+        // Field types may name any struct or enum, and signatures any type
+        declared.sort_by_key(|(_, item)| match item {
+            Item::Struct(..) => 0,
+            Item::Enum(..) => 1,
+            Item::Function(..) => 2,
+        });
+        for (namespace, item) in declared {
+            if namespace == self.namespace {
+                self.resolve_item(item);
+            } else {
+                self.with_namespace(&namespace, |checker| checker.resolve_item(item));
+            }
+        }
+    }
+
+    /// Declares the names of the items among `items` and in the namespaces
+    /// among them, adding each item to `declared` with its namespace.
+    fn declare_names<'a>(
+        &mut self,
+        items: impl IntoIterator<Item = &'a Expression>,
+        declared: &mut Vec<(ItemPath, Item<'a>)>,
+    ) {
+        for item in items {
             let position = item.position;
             match &item.kind {
-                ExpressionKind::FunctionDeclarationExpression { public, name, .. } => {
-                    let id = self.program.functions.len();
-                    let path = self.item_path(name);
-                    self.program.functions.push(FunctionDef {
-                        name: name.clone(),
-                        path,
-                        module: None,
-                        public: *public && self.at_top_level(),
-                        position,
-                        params: Vec::new(),
-                        param_variables: Vec::new(),
-                        return_type: None,
-                        declaration: item.id,
-                    });
-                    self.function_ids.insert(item.id, id);
-                    self.declare(name, Symbol::Function(id), position);
-                    self.export(*public, name, Export::Function(id), position);
-                    functions.push((item, id));
+                ExpressionKind::FunctionDeclarationExpression {
+                    public, doc, name, ..
+                } => {
+                    let id = self.declare_function(item, *public, name, doc, None, false);
+                    declared.push((self.namespace.clone(), Item::Function(item, id)));
+                }
+                ExpressionKind::ExternFunctionDeclarationExpression {
+                    public,
+                    doc,
+                    abi,
+                    name,
+                    variadic,
+                    ..
+                } => {
+                    if abi != "C" {
+                        self.error(CheckErrorKind::UnknownAbi(abi.clone()), position);
+                    }
+                    let c_name = Some(name.clone());
+                    let id = self.declare_function(item, *public, name, doc, c_name, *variadic);
+                    declared.push((self.namespace.clone(), Item::Function(item, id)));
                 }
                 ExpressionKind::StructDeclarationExpression { public, name, .. } => {
                     let id = self.program.structs.len();
@@ -457,7 +619,7 @@ impl Checker {
                     });
                     self.declare(name, Symbol::Struct(id), position);
                     self.export(*public, name, Export::Struct(id), position);
-                    structs.push((item, id));
+                    declared.push((self.namespace.clone(), Item::Struct(item, id)));
                 }
                 ExpressionKind::EnumDeclarationExpression { public, name, .. } => {
                     let id = self.program.enums.len();
@@ -473,40 +635,96 @@ impl Checker {
                     });
                     self.declare(name, Symbol::Enum(id), position);
                     self.export(*public, name, Export::Enum(id), position);
-                    enums.push((item, id));
+                    declared.push((self.namespace.clone(), Item::Enum(item, id)));
                 }
-                ExpressionKind::ImportExpression { module, imports } => {
-                    self.declare_import(module, imports, position);
+                // Declared by `declare_items`
+                ExpressionKind::ImportExpression { .. } => {
+                    if !self.namespace.is_empty() && self.at_top_level() {
+                        self.error(CheckErrorKind::ImportInNamespace, position);
+                    }
+                }
+                ExpressionKind::NamespaceExpression { path, items, .. } => {
+                    if !self.at_top_level() {
+                        self.error(CheckErrorKind::MisplacedNamespace, position);
+                        continue;
+                    }
+                    let mut full = self.namespace.clone();
+                    full.extend(path.iter().cloned());
+                    self.with_namespace(&full, |checker| checker.declare_names(items, declared));
                 }
                 _ => {}
             }
         }
+    }
 
-        for (item, id) in structs {
-            if let ExpressionKind::StructDeclarationExpression { fields, .. } = &item.kind {
-                self.program.structs[id].fields = self.resolve_fields(fields, item.position);
+    /// Declares a function, or with `c_name` an `extern "C"` one, whose
+    /// signature is resolved later.
+    fn declare_function(
+        &mut self,
+        item: &Expression,
+        public: bool,
+        name: &str,
+        doc: &Option<String>,
+        c_name: Option<String>,
+        variadic: bool,
+    ) -> usize {
+        let id = self.program.functions.len();
+        let path = self.item_path(name);
+        self.program.functions.push(FunctionDef {
+            name: name.to_owned(),
+            path,
+            module: None,
+            public: public && self.at_top_level(),
+            position: item.position,
+            doc: doc.clone(),
+            params: Vec::new(),
+            param_names: Vec::new(),
+            c_name,
+            variadic,
+            param_variables: Vec::new(),
+            return_type: None,
+            declaration: item.id,
+        });
+        self.function_ids.insert(item.id, id);
+        self.declare(name, Symbol::Function(id), item.position);
+        self.export(public, name, Export::Function(id), item.position);
+        id
+    }
+
+    /// Resolves the field types of a struct, the variants of an enum or the
+    /// signature of a function.
+    fn resolve_item(&mut self, item: Item) {
+        match item {
+            Item::Struct(item, id) => {
+                if let ExpressionKind::StructDeclarationExpression { fields, .. } = &item.kind {
+                    self.program.structs[id].fields = self.resolve_fields(fields, item.position);
+                }
             }
-        }
-
-        for (item, id) in enums {
-            if let ExpressionKind::EnumDeclarationExpression {
-                backing_type,
-                variants,
-                ..
-            } = &item.kind
-            {
-                self.declare_enum(id, backing_type.as_ref(), variants, item.position);
+            Item::Enum(item, id) => {
+                if let ExpressionKind::EnumDeclarationExpression {
+                    backing_type,
+                    variants,
+                    ..
+                } = &item.kind
+                {
+                    self.declare_enum(id, backing_type.as_ref(), variants, item.position);
+                }
             }
-        }
-
-        for (item, id) in functions {
-            if let ExpressionKind::FunctionDeclarationExpression {
-                params,
-                return_type,
-                ..
-            } = &item.kind
-            {
-                let params = params
+            Item::Function(item, id) => {
+                let (ExpressionKind::FunctionDeclarationExpression {
+                    params,
+                    return_type,
+                    ..
+                }
+                | ExpressionKind::ExternFunctionDeclarationExpression {
+                    params,
+                    return_type,
+                    ..
+                }) = &item.kind
+                else {
+                    return;
+                };
+                let types = params
                     .iter()
                     .map(|param| self.resolve_type(&param.r#type, item.position))
                     .collect();
@@ -514,7 +732,8 @@ impl Checker {
                     .as_ref()
                     .map(|return_type| self.resolve_type(return_type, item.position));
                 let function = &mut self.program.functions[id];
-                function.params = params;
+                function.params = types;
+                function.param_names = params.iter().map(|param| param.name.clone()).collect();
                 function.return_type = return_type;
             }
         }
@@ -523,8 +742,8 @@ impl Checker {
     /// Whether declarations here are at the top level of the file, outside
     /// any function or block.
     fn at_top_level(&self) -> bool {
-        // The built-in names, then the file's
-        self.scopes.len() == 2
+        // The built-in names, the file's, then one per namespace segment
+        self.scopes.len() == 2 + self.namespace.len()
     }
 
     /// Lets other files import the item if it's `pub`, which is only allowed
@@ -534,7 +753,9 @@ impl Checker {
             return;
         }
         if self.at_top_level() {
-            self.program.exports.push((name.to_owned(), export));
+            let mut path = self.namespace.clone();
+            path.push(name.to_owned());
+            self.program.exports.push((path.join("::"), export));
         } else {
             self.error(CheckErrorKind::MisplacedPub, position);
         }
@@ -609,28 +830,72 @@ impl Checker {
     }
 
     fn declare_import(&mut self, module: &[String], imports: &[String], position: Location) {
-        // `import std;` names a built-in module, which is always visible anyway
-        if module.is_empty() && imports.iter().all(|name| builtins::module(name).is_some()) {
+        // `import types;` or `import std;` name what's always visible anyway
+        let visible = |checker: &Self, name: &String| {
+            builtins::module(name).is_some()
+                || (checker.namespaces.contains_key(std::slice::from_ref(name))
+                    && !checker.imports.contains_key(name))
+        };
+        if module.is_empty() && imports.iter().all(|name| visible(self, name)) {
             return;
         }
 
         let module_name = module.join("::");
-        let Some(module) = builtins::module(&module_name) else {
+        if self.namespaces.contains_key(module) && !self.imports.contains_key(&module_name) {
+            self.declare_namespace_import(module, imports, position);
+            return;
+        }
+        let Some(builtin) = builtins::module(&module_name) else {
             self.declare_file_import(module, imports, position);
             return;
         };
 
         for name in imports {
             let names = if name == "*" {
-                module.members()
+                builtin.members()
             } else {
                 vec![name.as_str()]
             };
 
             for name in names {
-                match module.member(name) {
-                    Some(member) => self.declare(name, member.into(), position),
+                match builtin.member(name) {
+                    Some(ty) => self.declare(name, Symbol::Primitive(ty), position),
                     None => self.unknown_member(&module_name, name, position),
+                }
+            }
+        }
+    }
+
+    /// `import std::io::printf;`, `import std::io::{printf, puts}` or
+    /// `import std::io::*`: makes items of a namespace visible by their names.
+    fn declare_namespace_import(
+        &mut self,
+        namespace: &[String],
+        imports: &[String],
+        position: Location,
+    ) {
+        let path = namespace.join("::");
+        let names = self.namespaces[namespace].clone();
+        for name in imports {
+            if name == "*" {
+                let mut members: Vec<_> = names.iter().collect();
+                members.sort_by_key(|(name, _)| name.as_str());
+                for (name, symbol) in members {
+                    self.declare(name, symbol.clone(), position);
+                }
+                continue;
+            }
+            match names.get(name) {
+                Some(symbol) => self.declare(name, symbol.clone(), position),
+                None => {
+                    let mut nested = namespace.to_vec();
+                    nested.push(name.clone());
+                    if self.namespaces.contains_key(&nested) {
+                        let namespace = nested.join("::");
+                        self.error(CheckErrorKind::NamespaceImport(namespace), position);
+                    } else {
+                        self.unknown_member(&path, name, position);
+                    }
                 }
             }
         }
@@ -640,6 +905,13 @@ impl Checker {
     /// error and returning `None` if it doesn't exist.
     fn resolve_path(&mut self, path: &str, position: Location) -> Option<Resolved> {
         let segments: Vec<&str> = path.split("::").collect();
+
+        if segments.len() > 1
+            && self.lookup(segments[0]).is_none()
+            && let Ok(resolved) = self.resolve_namespaced(&segments, position)
+        {
+            return resolved;
+        }
 
         match segments.as_slice() {
             [name] => match self.lookup(name) {
@@ -679,6 +951,56 @@ impl Checker {
                 None
             }
         }
+    }
+
+    /// Resolves `ns::name` or `ns::Enum::Variant`, where `ns` is a namespace
+    /// path relative to the current namespace or one around it, innermost
+    /// first. `Err` means no namespace matched and the path may be a module's.
+    fn resolve_namespaced(
+        &mut self,
+        segments: &[&str],
+        position: Location,
+    ) -> Result<Option<Resolved>, ()> {
+        let mut found = None;
+        for base in (0..=self.namespace.len()).rev() {
+            // The longest namespace first, so `a::b::f` prefers namespace `a::b`
+            for length in (1..segments.len()).rev() {
+                let mut namespace = self.namespace[..base].to_vec();
+                namespace.extend(segments[..length].iter().map(|&segment| segment.to_owned()));
+                let Some(names) = self.namespaces.get(&namespace) else {
+                    continue;
+                };
+                let container = segments[..length].join("::");
+                match &segments[length..] {
+                    [name] => {
+                        if let Some(symbol) = names.get(*name) {
+                            return Ok(Some(Resolved::Symbol(symbol.clone())));
+                        }
+                    }
+                    [enum_name, variant] => {
+                        if let Some(&Symbol::Enum(enum_id)) = names.get(*enum_name) {
+                            let path = format!("{container}::{enum_name}");
+                            return Ok(self.resolve_variant(&path, enum_id, variant, position));
+                        }
+                    }
+                    _ => {}
+                }
+                found.get_or_insert((container, segments[length]));
+            }
+        }
+
+        let Some((container, member)) = found else {
+            return Err(());
+        };
+        // `types::u8` or `geo::area` is the module's even with a namespace of
+        // that name
+        let module = segments[0];
+        let is_module = builtins::module(module).is_some() || self.modules.contains_key(module);
+        if is_module && !container.contains("::") {
+            return Err(());
+        }
+        self.unknown_member(&container, member, position);
+        Ok(None)
     }
 
     /// Resolves `member` of the enum `container`.
@@ -730,6 +1052,12 @@ impl Checker {
     /// the declaration the type appears in.
     fn resolve_type(&mut self, typeinfo: &TypeInfo, position: Location) -> Type {
         match typeinfo {
+            // `*void` points at anything, like C's `void *`
+            TypeInfo::PointerType { pointee } if is_void(pointee) => Type::void_pointer(),
+            TypeInfo::NamedType { name } if name == "void" => {
+                self.error(CheckErrorKind::BareVoid, position);
+                Type::Unknown
+            }
             TypeInfo::NamedType { name } => match self.resolve_path(name, position) {
                 Some(Resolved::Symbol(Symbol::Primitive(ty))) => ty,
                 Some(Resolved::Symbol(Symbol::Struct(id))) => Type::Struct(id),
@@ -954,6 +1282,11 @@ impl Checker {
             ty,
             constant,
             global: self.function_depth() == 0,
+            path: if self.function_depth() == 0 {
+                self.namespace.clone()
+            } else {
+                Vec::new()
+            },
             module: None,
             public: false,
         });
@@ -1070,6 +1403,17 @@ impl Checker {
         let id = expression.id;
 
         match &expression.kind {
+            // Declared up front by `declare_items`, and has no body
+            ExpressionKind::ExternFunctionDeclarationExpression { .. } => Type::Void,
+            ExpressionKind::NamespaceExpression { path, items, .. } => {
+                // Misplaced ones were reported by `declare_items`
+                if self.at_top_level() {
+                    let mut full = self.namespace.clone();
+                    full.extend(path.iter().cloned());
+                    self.with_namespace(&full, |checker| checker.check_items(items));
+                }
+                Type::Void
+            }
             // Declared up front by `declare_items`
             ExpressionKind::ImportExpression { .. }
             | ExpressionKind::StructDeclarationExpression { .. }
@@ -1145,6 +1489,7 @@ impl Checker {
                 name,
                 typeinfo,
                 value,
+                ..
             } => {
                 self.check_let(
                     *public,
@@ -1615,7 +1960,7 @@ impl Checker {
                     .insert(id, Resolution::Variable(variable.id));
                 self.read_variable(name, &variable, position)
             }
-            Some(Resolved::Symbol(Symbol::Function(_) | Symbol::BuiltinFunction(_))) => {
+            Some(Resolved::Symbol(Symbol::Function(_))) => {
                 self.error(CheckErrorKind::FunctionAsValue(name.to_owned()), position);
                 Type::Unknown
             }
@@ -1809,13 +2154,6 @@ impl Checker {
                             .resolutions
                             .insert(callee.id, Resolution::Function(function_id));
                         let function = self.program.functions[function_id].clone();
-                        let result = function.return_type.unwrap_or(Type::Void);
-                        (Some((name.clone(), function.params)), false, result)
-                    }
-                    Some(Resolved::Symbol(Symbol::BuiltinFunction(function))) => {
-                        self.program
-                            .resolutions
-                            .insert(callee.id, Resolution::Builtin(function.clone()));
                         let result = function.return_type.unwrap_or(Type::Void);
                         (
                             Some((name.clone(), function.params)),
@@ -2362,11 +2700,38 @@ fn binary_symbol(operator: BinaryOperator) -> &'static str {
     }
 }
 
+/// Adds the full paths of the namespaces among `items`, nested ones too, to
+/// `found`.
+fn local_namespaces(items: &[&Expression], path: &mut Vec<String>, found: &mut HashSet<ItemPath>) {
+    for item in items {
+        if let ExpressionKind::NamespaceExpression {
+            path: segments,
+            items,
+            ..
+        } = &item.kind
+        {
+            let length = path.len();
+            for segment in segments {
+                path.push(segment.clone());
+                found.insert(path.clone());
+            }
+            local_namespaces(&items.iter().collect::<Vec<_>>(), path, found);
+            path.truncate(length);
+        }
+    }
+}
+
+fn is_void(typeinfo: &TypeInfo) -> bool {
+    matches!(typeinfo, TypeInfo::NamedType { name } if name == "void")
+}
+
 fn is_declaration(kind: &ExpressionKind) -> bool {
     matches!(
         kind,
         ExpressionKind::ImportExpression { .. }
+            | ExpressionKind::NamespaceExpression { .. }
             | ExpressionKind::FunctionDeclarationExpression { .. }
+            | ExpressionKind::ExternFunctionDeclarationExpression { .. }
             | ExpressionKind::StructDeclarationExpression { .. }
             | ExpressionKind::EnumDeclarationExpression { .. }
             | ExpressionKind::LetExpression { .. }

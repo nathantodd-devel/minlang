@@ -1,0 +1,40 @@
+import std::io::printf;
+
+namespace geo {
+    const SCALE = 10;
+
+    struct Point { x: s32, y: s32 }
+    enum Kind { Dot, Line }
+
+    fn scaled(p: Point) -> s32 { (p.x + p.y) * SCALE }
+
+    namespace detail {
+        // Sees the names of the namespaces around it
+        fn origin() -> Point { Point { x: 0, y: 0 } }
+    }
+}
+
+// Reopened: its names merge with the first block's
+namespace geo {
+    fn kind_of(p: Point) -> Kind {
+        if (p.x == detail::origin().x) { Kind::Dot } else { Kind::Line }
+    }
+}
+
+namespace std::mem {
+    fn fill(bytes: u8[?], value: u8, count: usize) {
+        for (let i: usize = 0; i < count; i++) {
+            bytes[i] = value;
+        }
+    }
+}
+
+fn main() -> s32 {
+    let p = geo::Point { x: 1, y: 2 };
+    printf("%d\n", geo::scaled(p));
+    printf("%d\n", geo::kind_of(geo::detail::origin()) == geo::Kind::Dot);
+    let buffer: u8[4]{0};
+    std::mem::fill(buffer, 'z', 3);
+    printf("%s\n", buffer);
+    0
+}

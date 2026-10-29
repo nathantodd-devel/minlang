@@ -1,0 +1,245 @@
+//! Formatted and character I/O on streams and file descriptors (C's `stdio.h`, and `unistd.h`'s `read`/`write`). Streams like `stdout` are `*void`.
+
+namespace std::io {
+    /// Prints formatted text to standard output.
+    /// @arg {format} a format string like "%d\n"
+    /// @returns the number of bytes written, or a negative number on error
+    pub extern "C" fn printf(format: u8[?], ...) -> s32;
+
+    /// Prints formatted text to a stream.
+    /// @arg {stream} the stream to write to
+    /// @arg {format} a format string
+    /// @returns the number of bytes written, or a negative number on error
+    pub extern "C" fn fprintf(stream: *void, format: u8[?], ...) -> s32;
+
+    /// Prints formatted text to a file descriptor.
+    /// @arg {fd} the file descriptor to write to
+    /// @arg {format} a format string
+    /// @returns the number of bytes written, or a negative number on error
+    pub extern "C" fn dprintf(fd: s32, format: u8[?], ...) -> s32;
+
+    /// Formats text into a buffer, null-terminated.
+    /// @arg {buffer} where to write; it must be big enough
+    /// @arg {format} a format string
+    /// @returns the number of bytes written, not counting the terminator
+    pub extern "C" fn sprintf(buffer: u8[?], format: u8[?], ...) -> s32;
+
+    /// Formats at most `size - 1` bytes into a buffer, null-terminated.
+    /// @arg {buffer} where to write
+    /// @arg {size} the size of `buffer`, including the terminator
+    /// @arg {format} a format string
+    /// @returns the length the whole text would have had
+    pub extern "C" fn snprintf(buffer: u8[?], size: usize, format: u8[?], ...) -> s32;
+
+    /// Reads formatted input from standard input into the pointers that follow.
+    /// @arg {format} a format string
+    /// @returns the number of items assigned, or EOF (-1) on failure
+    pub extern "C" fn scanf(format: u8[?], ...) -> s32;
+
+    /// Reads formatted input from a stream.
+    /// @arg {stream} the stream to read from
+    /// @arg {format} a format string
+    /// @returns the number of items assigned, or EOF (-1) on failure
+    pub extern "C" fn fscanf(stream: *void, format: u8[?], ...) -> s32;
+
+    /// Reads formatted input from a string.
+    /// @arg {text} the text to read from
+    /// @arg {format} a format string
+    /// @returns the number of items assigned, or EOF (-1) on failure
+    pub extern "C" fn sscanf(text: u8[?], format: u8[?], ...) -> s32;
+
+    /// Prints text and a newline to standard output.
+    /// @arg {text} the text to print
+    /// @returns a non-negative number, or EOF (-1) on error
+    pub extern "C" fn puts(text: u8[?]) -> s32;
+
+    /// Writes text, without a newline, to a stream.
+    /// @arg {text} the text to write
+    /// @arg {stream} the stream to write to
+    /// @returns a non-negative number, or EOF (-1) on error
+    pub extern "C" fn fputs(text: u8[?], stream: *void) -> s32;
+
+    /// Writes a character to standard output.
+    /// @arg {c} the character
+    /// @returns the character, or EOF (-1) on error
+    pub extern "C" fn putchar(c: s32) -> s32;
+
+    /// Writes a character to a stream.
+    /// @arg {c} the character
+    /// @arg {stream} the stream to write to
+    /// @returns the character, or EOF (-1) on error
+    pub extern "C" fn fputc(c: s32, stream: *void) -> s32;
+
+    /// Writes a character to a stream, like `fputc`.
+    /// @arg {c} the character
+    /// @arg {stream} the stream to write to
+    /// @returns the character, or EOF (-1) on error
+    pub extern "C" fn putc(c: s32, stream: *void) -> s32;
+
+    /// Reads a character from standard input.
+    /// @returns the character, or EOF (-1) at the end or on error
+    pub extern "C" fn getchar() -> s32;
+
+    /// Reads a character from a stream.
+    /// @arg {stream} the stream to read from
+    /// @returns the character, or EOF (-1) at the end or on error
+    pub extern "C" fn fgetc(stream: *void) -> s32;
+
+    /// Reads a character from a stream, like `fgetc`.
+    /// @arg {stream} the stream to read from
+    /// @returns the character, or EOF (-1) at the end or on error
+    pub extern "C" fn getc(stream: *void) -> s32;
+
+    /// Pushes a character back onto a stream, to be read next.
+    /// @arg {c} the character to push back
+    /// @arg {stream} the stream
+    /// @returns the character, or EOF (-1) on error
+    pub extern "C" fn ungetc(c: s32, stream: *void) -> s32;
+
+    /// Reads a line, including its newline, of at most `size - 1` bytes.
+    /// @arg {buffer} where to store the line
+    /// @arg {size} the size of `buffer`
+    /// @arg {stream} the stream to read from
+    /// @returns `buffer`, or null at the end or on error
+    pub extern "C" fn fgets(buffer: u8[?], size: s32, stream: *void) -> u8[?];
+
+    /// Reads a whole line, growing the buffer to fit.
+    /// @arg {line} a pointer to the buffer, which is (re)allocated as needed
+    /// @arg {size} a pointer to the buffer's size
+    /// @arg {stream} the stream to read from
+    /// @returns the number of bytes read, or -1 at the end or on error
+    pub extern "C" fn getline(line: *void, size: *void, stream: *void) -> s64;
+
+    /// Opens a file as a stream.
+    /// @arg {path} the file to open
+    /// @arg {mode} like "r", "w" or "a+"
+    /// @returns the stream, or null on error
+    pub extern "C" fn fopen(path: u8[?], mode: u8[?]) -> *void;
+
+    /// Opens a stream on a file descriptor.
+    /// @arg {fd} an open file descriptor
+    /// @arg {mode} like "r" or "w"
+    /// @returns the stream, or null on error
+    pub extern "C" fn fdopen(fd: s32, mode: u8[?]) -> *void;
+
+    /// Reopens a stream on another file.
+    /// @arg {path} the file to open
+    /// @arg {mode} like "r" or "w"
+    /// @arg {stream} the stream to reuse
+    /// @returns the stream, or null on error
+    pub extern "C" fn freopen(path: u8[?], mode: u8[?], stream: *void) -> *void;
+
+    /// Flushes and closes a stream.
+    /// @arg {stream} the stream to close
+    /// @returns 0, or EOF (-1) on error
+    pub extern "C" fn fclose(stream: *void) -> s32;
+
+    /// Writes out a stream's buffered output.
+    /// @arg {stream} the stream, or null for every output stream
+    /// @returns 0, or EOF (-1) on error
+    pub extern "C" fn fflush(stream: *void) -> s32;
+
+    /// Reads up to `count` items of `size` bytes.
+    /// @arg {buffer} where to store the items
+    /// @arg {size} the size of each item
+    /// @arg {count} how many items to read
+    /// @arg {stream} the stream to read from
+    /// @returns the number of whole items read
+    pub extern "C" fn fread(buffer: *void, size: usize, count: usize, stream: *void) -> usize;
+
+    /// Writes `count` items of `size` bytes.
+    /// @arg {buffer} the items to write
+    /// @arg {size} the size of each item
+    /// @arg {count} how many items to write
+    /// @arg {stream} the stream to write to
+    /// @returns the number of whole items written
+    pub extern "C" fn fwrite(buffer: *void, size: usize, count: usize, stream: *void) -> usize;
+
+    /// Moves a stream's position.
+    /// @arg {stream} the stream
+    /// @arg {offset} the offset in bytes
+    /// @arg {whence} 0 from the start, 1 from the current position, 2 from the end
+    /// @returns 0, or -1 on error
+    pub extern "C" fn fseek(stream: *void, offset: s64, whence: s32) -> s32;
+
+    /// Gets a stream's position.
+    /// @arg {stream} the stream
+    /// @returns the offset from the start in bytes, or -1 on error
+    pub extern "C" fn ftell(stream: *void) -> s64;
+
+    /// Moves a stream back to its start and clears its error flag.
+    /// @arg {stream} the stream
+    pub extern "C" fn rewind(stream: *void);
+
+    /// Tells whether a stream has reached its end.
+    /// @arg {stream} the stream
+    /// @returns non-zero at the end
+    pub extern "C" fn feof(stream: *void) -> s32;
+
+    /// Tells whether a stream has had an error.
+    /// @arg {stream} the stream
+    /// @returns non-zero after an error
+    pub extern "C" fn ferror(stream: *void) -> s32;
+
+    /// Clears a stream's end and error flags.
+    /// @arg {stream} the stream
+    pub extern "C" fn clearerr(stream: *void);
+
+    /// Gets the file descriptor under a stream.
+    /// @arg {stream} the stream
+    /// @returns the file descriptor, or -1 on error
+    pub extern "C" fn fileno(stream: *void) -> s32;
+
+    /// Sets how a stream is buffered, before any I/O on it.
+    /// @arg {stream} the stream
+    /// @arg {buffer} the buffer to use, or null for one allocated
+    /// @arg {mode} 0 fully buffered, 1 line buffered, 2 unbuffered
+    /// @arg {size} the size of `buffer`
+    /// @returns 0, or non-zero on error
+    pub extern "C" fn setvbuf(stream: *void, buffer: u8[?], mode: s32, size: usize) -> s32;
+
+    /// Opens a temporary file, removed when closed.
+    /// @returns the stream, or null on error
+    pub extern "C" fn tmpfile() -> *void;
+
+    /// Prints the last error's message to standard error.
+    /// @arg {prefix} text to print first, like the failed call's name
+    pub extern "C" fn perror(prefix: u8[?]);
+
+    /// Reads bytes from a file descriptor.
+    /// @arg {fd} the file descriptor
+    /// @arg {buffer} where to store the bytes
+    /// @arg {count} the most bytes to read
+    /// @returns the number of bytes read, 0 at the end, or -1 on error
+    pub extern "C" fn read(fd: s32, buffer: *void, count: usize) -> s64;
+
+    /// Writes bytes to a file descriptor.
+    /// @arg {fd} the file descriptor
+    /// @arg {buffer} the bytes to write
+    /// @arg {count} how many bytes to write
+    /// @returns the number of bytes written, or -1 on error
+    pub extern "C" fn write(fd: s32, buffer: *void, count: usize) -> s64;
+
+    /// Opens a file, passing the permissions as a third argument when creating it.
+    /// @arg {path} the file to open
+    /// @arg {flags} like O_RDONLY (0), O_WRONLY (1) or O_RDWR (2), or-ed with others
+    /// @returns the file descriptor, or -1 on error
+    pub extern "C" fn open(path: u8[?], flags: s32, ...) -> s32;
+
+    /// Closes a file descriptor.
+    /// @arg {fd} the file descriptor
+    /// @returns 0, or -1 on error
+    pub extern "C" fn close(fd: s32) -> s32;
+
+    /// Moves a file descriptor's position.
+    /// @arg {fd} the file descriptor
+    /// @arg {offset} the offset in bytes
+    /// @arg {whence} 0 from the start, 1 from the current position, 2 from the end
+    /// @returns the new offset from the start, or -1 on error
+    pub extern "C" fn lseek(fd: s32, offset: s64, whence: s32) -> s64;
+
+    /// Tells whether a file descriptor is a terminal.
+    /// @arg {fd} the file descriptor
+    /// @returns 1 for a terminal, otherwise 0
+    pub extern "C" fn isatty(fd: s32) -> s32;
+}

@@ -1,4 +1,4 @@
-import std::printf;
+import std::io::printf;
 
 // A generator: its return type is `iter T`, and each `yield` hands the caller
 // the next value. Returning (or reaching the end) finishes the iteration.

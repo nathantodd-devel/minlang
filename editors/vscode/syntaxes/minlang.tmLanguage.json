@@ -81,8 +81,12 @@
           "name": "keyword.control.import.minlang"
         },
         {
-          "match": "\\b(pub)\\b",
+          "match": "\\b(pub|extern)\\b",
           "name": "storage.modifier.minlang"
+        },
+        {
+          "match": "\\b(namespace)\\b",
+          "name": "storage.type.namespace.minlang"
         }
       ]
     },

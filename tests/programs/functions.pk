@@ -1,5 +1,5 @@
 // exit: 7
-import std::printf;
+import std::io::printf;
 
 fn factorial(n: u64) -> u64 {
     if (n <= 1) {

@@ -1,0 +1,65 @@
+//! Memory allocation and raw memory (C's `stdlib.h` and `string.h`).
+
+namespace std::mem {
+    /// Allocates memory, uninitialized.
+    /// @arg {size} allocation size
+    /// @returns a pointer to the allocated memory NULL on error
+    pub extern "C" fn malloc(size: usize) -> *void;
+
+    /// Allocates memory for `count` items, filled with zeros.
+    /// @arg {count} how many items
+    /// @arg {size} the size of each item
+    /// @returns a pointer to the allocated memory, or null on error
+    pub extern "C" fn calloc(count: usize, size: usize) -> *void;
+
+    /// Resizes an allocation, moving it if need be.
+    /// @arg {pointer} memory from `malloc`, or null
+    /// @arg {size} the new size
+    /// @returns a pointer to the resized memory, or null on error (leaving the old memory allocated)
+    pub extern "C" fn realloc(pointer: *void, size: usize) -> *void;
+
+    /// Allocates memory at an address that's a multiple of `alignment`.
+    /// @arg {alignment} a power of two
+    /// @arg {size} a multiple of `alignment`
+    /// @returns a pointer to the allocated memory, or null on error
+    pub extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *void;
+
+    /// Frees allocated memory.
+    /// @arg {pointer} memory from `malloc`, `calloc` or `realloc`, or null
+    pub extern "C" fn free(pointer: *void);
+
+    /// Copies bytes between memory that doesn't overlap.
+    /// @arg {to} where to copy to
+    /// @arg {from} where to copy from; it must not overlap `to`
+    /// @arg {count} how many bytes
+    /// @returns `to`
+    pub extern "C" fn memcpy(to: *void, from: *void, count: usize) -> *void;
+
+    /// Copies bytes, even between memory that overlaps.
+    /// @arg {to} where to copy to
+    /// @arg {from} where to copy from
+    /// @arg {count} how many bytes
+    /// @returns `to`
+    pub extern "C" fn memmove(to: *void, from: *void, count: usize) -> *void;
+
+    /// Fills memory with a byte.
+    /// @arg {to} the memory to fill
+    /// @arg {value} the byte to fill it with
+    /// @arg {count} how many bytes
+    /// @returns `to`
+    pub extern "C" fn memset(to: *void, value: s32, count: usize) -> *void;
+
+    /// Compares bytes.
+    /// @arg {a} the first bytes
+    /// @arg {b} the second bytes
+    /// @arg {count} how many bytes
+    /// @returns negative, 0 or positive as `a` sorts before, equal to or after `b`
+    pub extern "C" fn memcmp(a: *void, b: *void, count: usize) -> s32;
+
+    /// Finds the first occurrence of a byte.
+    /// @arg {memory} the bytes to search
+    /// @arg {value} the byte to find
+    /// @arg {count} how many bytes to search
+    /// @returns a pointer to it, or null if it's not there
+    pub extern "C" fn memchr(memory: *void, value: s32, count: usize) -> *void;
+}
