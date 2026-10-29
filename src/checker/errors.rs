@@ -26,6 +26,21 @@ pub enum Construct {
 pub enum CheckErrorKind {
     UndefinedName(String),
     UnknownModule(String),
+    /// The file of an imported module couldn't be loaded.
+    ImportFailed {
+        module: String,
+        message: String,
+    },
+    /// An imported module failed to check, so what it exports may be
+    /// incomplete.
+    ModuleHasErrors(String),
+    /// `import geo::helper` where `helper` isn't `pub`.
+    NotPublic {
+        module: String,
+        name: String,
+    },
+    /// `pub` on something other than a top-level declaration.
+    MisplacedPub,
     /// `container` has no variant or member called `member`.
     UnknownMember {
         container: String,
@@ -139,7 +154,20 @@ impl fmt::Display for CheckErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UndefinedName(name) => write!(f, "Undefined name '{name}'"),
-            Self::UnknownModule(name) => write!(f, "Unknown module '{name}'"),
+            Self::UnknownModule(name) => write!(
+                f,
+                "Unknown module '{name}': there's no file '{}.pk' next to this one",
+                name.replace("::", "/")
+            ),
+            Self::ImportFailed { module, message } => {
+                write!(f, "Could not import '{module}': {message}")
+            }
+            Self::ModuleHasErrors(module) => write!(f, "Module '{module}' has errors"),
+            Self::NotPublic { module, name } => write!(
+                f,
+                "'{name}' in '{module}' isn't public; declare it with 'pub' to import it"
+            ),
+            Self::MisplacedPub => f.write_str("'pub' is only allowed on top-level declarations"),
             Self::UnknownMember { container, member } => {
                 write!(f, "'{container}' has no member '{member}'")
             }

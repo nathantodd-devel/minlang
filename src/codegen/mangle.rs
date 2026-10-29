@@ -69,7 +69,8 @@ fn int_code(int: IntType) -> &'static str {
     }
 }
 
-/// The Itanium encoding of a parameter type.
+/// The Itanium encoding of a parameter type. Structs and enums declared in
+/// this file are named in `module`; imported ones in the module they're from.
 pub fn type_code(ty: &Type, module: &str, program: &CheckedProgram) -> String {
     match ty {
         Type::Int(int) => int_code(*int).to_owned(),
@@ -89,10 +90,12 @@ pub fn type_code(ty: &Type, module: &str, program: &CheckedProgram) -> String {
         } => format!("A{size}_{}", type_code(element, module, program)),
         Type::Struct(id) => {
             let definition = &program.structs[*id];
+            let module = definition.module.as_deref().unwrap_or(module);
             nested_name(module, &definition.path, &definition.name)
         }
         Type::Enum(id) => {
             let definition = &program.enums[*id];
+            let module = definition.module.as_deref().unwrap_or(module);
             nested_name(module, &definition.path, &definition.name)
         }
         Type::Iterator(item) => format!("4iterI{}E", type_code(item, module, program)),
@@ -147,6 +150,7 @@ mod tests {
         program.structs.push(StructDef {
             name: "Point".to_owned(),
             path: vec!["outer".to_owned()],
+            module: None,
             position: crate::parser::Location { start, end: start },
             fields: Vec::new(),
         });

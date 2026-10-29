@@ -49,7 +49,8 @@ Numeric literals carry explicit size/base information: `2u32`, `0x44`,
 `0b110110`, `0673` (octal), `2.5f32`, `2e10`, etc. See
 [`examples/basic.pk`](examples/basic.pk),
 [`examples/structs.pk`](examples/structs.pk),
-[`examples/iterators.pk`](examples/iterators.pk) and
+[`examples/iterators.pk`](examples/iterators.pk),
+[`examples/modules`](examples/modules) (a program split across files) and
 [`examples/errors.pk`](examples/errors.pk) (a catalog of intentionally
 invalid literals, used to exercise the tokenizer's error reporting).
 
@@ -64,12 +65,14 @@ minlang run examples/hello.pk              # compile and run
 minlang run examples/hello.pk -- a b       # pass arguments to the program
 minlang build examples/hello.pk            # writes ./hello
 minlang build -O2 -o hi examples/hello.pk  # optimized (-O0 to -O3), named hi
+minlang build -c examples/hello.pk         # just an object file: ./hello.o
 minlang check examples/hello.pk            # report errors without compiling
 minlang emit llvm examples/hello.pk        # print the LLVM IR
 minlang emit ast examples/hello.pk         # or the syntax tree, or `tokens`
 ```
 
-`run` exits with the program's exit code. `--time` prints how long each
+`build` and `run` also compile and link the files the program imports (see
+[Modules](#modules)). `run` exits with the program's exit code. `--time` prints how long each
 compiler stage takes, and `minlang help <command>` describes each command's
 options.
 
@@ -158,7 +161,8 @@ block's last expression, if it has no trailing `;`, is the block's value.
 
 | Construct | Example |
 |---|---|
-| Import | `import std::printf;` `import std::{printf, strcat};` `import types::*;` |
+| Import | `import std::printf;` `import std::{printf, strcat};` `import types::*;` `import geo;` (see [Modules](#modules)) |
+| Public | `pub fn` `pub struct` `pub enum` `pub let` `pub const`: other files can import it |
 | Function | `fn add(a: s32, b: s32) -> s32 { a + b }` (return type optional) |
 | Variable | `let x: u32 = 1;` `const y = 2.5;` (type and value optional) |
 | Struct | `struct Point { x: f32, y: f32 }`, built with `Point { x: 1.0, y: 2.0 }` |
@@ -217,6 +221,61 @@ clause, then the body, then the step; `continue` jumps to the step. The fourth
 clause must be a `let`, and its variable is visible in the body only. It's
 meant for containers with their own length and accessor functions, without
 needing a generator.
+
+## Modules
+
+Every `.pk` file is a module, named after the file. A file imports another by
+its path relative to the importing file, with `::` between directories:
+
+```rust
+// main.pk
+import std::printf;
+import shapes::geometry;                  // the module in shapes/geometry.pk
+import shapes::geometry::{Point, area};   // or items from it
+// import shapes::geometry::*;            // or all of its public items
+
+fn main() -> s32 {
+    let p: Point = Point { x: 1.0, y: 2.0 };
+    printf("%f\n", area(geometry::Shape::Circle(p.x)));
+    0
+}
+```
+
+Only top-level declarations marked `pub` can be imported; everything else is
+private to its file. `import shapes::geometry;` makes the module usable by
+name, as `geometry::area` or `geometry::Shape::Circle`. Without it, only the
+items named in an `import` are visible. `import a::b;` imports the item `b`
+from `a.pk` if that file exists, and otherwise the module in `a/b.pk`. An item
+reached through two imports is the same item, so a `Point` from `geometry`
+passed through another module is still a `geometry::Point`. The built-in
+`std` and `types` take precedence over files with those names.
+
+**Compiling.** Each file is checked once, after the files it imports, and the
+files importing it see only what its `pub` items look like. Each one compiles
+to its own LLVM module: `pub` functions and globals get external linkage,
+and the importing module declares them. `minlang build main.pk` compiles
+every imported file and links them all; `minlang build -c` compiles just the
+one file to an object file, so a program can be built piece by piece and
+linked with clang:
+
+```bash
+minlang build -c shapes/geometry.pk     # writes geometry.o
+minlang build -c main.pk                # writes main.o
+clang main.o geometry.o -o main
+```
+
+`minlang emit llvm` prints the named file's module only. The language
+server reads imported files from disk, so it sees their last saved contents.
+
+**Limits:**
+
+- Imports can't form a cycle, directly or not.
+- Symbols are named after the file, not its directory, so two imported files
+  can't have the same name (`a/geo.pk` and `b/geo.pk`). The build reports
+  this rather than failing to link.
+- A global set by code at startup (not to a constant) may not be set yet when
+  another module's startup code reads it, since modules start up in link
+  order.
 
 ## Checking
 
@@ -329,8 +388,8 @@ saturate, as in Rust; the extra arguments of variadic C functions like
 `_ZN9iterators9bytes_getERN9iterators5BytesEm` is
 `iterators::bytes_get(iterators::Bytes&, unsigned long)`. Same-named
 functions in sibling blocks get a `$2` segment (`f::$2::g()`). Everything
-except `main` has internal linkage, so nothing can clash with C libraries at
-link time.
+except `main` and `pub` items has internal linkage, so nothing else can clash
+with C libraries at link time.
 
 **Known limitations:**
 
@@ -354,6 +413,7 @@ src/
                typeinfo.rs, errors.rs
   checker/     Checker: mod.rs (names, types and assignment checks),
                types.rs (types and conversion rules),
+               imports.rs (copying in what other files export),
                builtins.rs (built-in types and modules), errors.rs
   codegen/     Code generation: ir.rs (backend-neutral IR), lower/ (lowering:
                expressions, control flow, switch patterns, generators),
@@ -362,6 +422,7 @@ src/
                driver.rs (runs clang)
   lsp/         Language server: mod.rs (protocol), analysis.rs (diagnostics,
                semantic tokens, hover, definitions, completion)
+  modules.rs   Finds, parses and checks the files a program imports
   diagnostic.rs  Renders errors with their source line
   error.rs     Shared GenericError<K> positioned error type
   lib.rs       Library root
@@ -370,7 +431,7 @@ editors/       Editor support: tree-sitter-minlang/ (grammar and queries),
                zed/, vscode/, neovim/, helix/
 examples/      Sample .pk source files, with expected output in .out files
 tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs,
-               codegen.rs, cli.rs, lsp.rs, editors.rs) and end-to-end
+               modules.rs, codegen.rs, cli.rs, lsp.rs, editors.rs) and end-to-end
                programs/ with expected output
 ```
 
@@ -381,6 +442,7 @@ tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs,
 - [x] Type checking
 - [x] Code generation (LLVM IR)
 - [x] Language server and editor support
+- [x] Modules: importing other files, separate compilation
 
 ## License
 

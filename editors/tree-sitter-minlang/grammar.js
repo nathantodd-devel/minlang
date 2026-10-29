@@ -87,6 +87,8 @@ module.exports = grammar({
 
     function_item: ($) =>
       seq(
+        // `pub` lets other files import it
+        optional('pub'),
         'fn',
         field('name', $.identifier),
         field('parameters', $.parameters),
@@ -99,7 +101,12 @@ module.exports = grammar({
     parameter: ($) => seq(field('name', $.identifier), ':', field('type', $._type)),
 
     struct_item: ($) =>
-      seq('struct', field('name', $._type_identifier), field('body', $.field_declaration_list)),
+      seq(
+        optional('pub'),
+        'struct',
+        field('name', $._type_identifier),
+        field('body', $.field_declaration_list),
+      ),
 
     field_declaration_list: ($) => seq('{', commaSep($.field_declaration), '}'),
 
@@ -108,6 +115,7 @@ module.exports = grammar({
 
     enum_item: ($) =>
       seq(
+        optional('pub'),
         'enum',
         field('name', $._type_identifier),
         optional(seq(':', field('backing_type', $._type))),
@@ -131,6 +139,7 @@ module.exports = grammar({
     let_declaration: ($) =>
       prec.right(
         seq(
+          optional('pub'),
           choice('let', 'const'),
           field('name', $.identifier),
           optional(seq(':', field('type', $._type), optional(field('fill', $.block)))),
@@ -158,8 +167,13 @@ module.exports = grammar({
 
     primitive_type: (_) => choice(...PRIMITIVES),
 
+    // `geo::Point`, or `geo::Shape::Rect` in a struct literal
     scoped_type_identifier: ($) =>
-      seq(field('path', $.identifier), '::', field('name', $._type_identifier)),
+      seq(
+        field('path', choice($.identifier, $.scoped_identifier)),
+        '::',
+        field('name', $._type_identifier),
+      ),
 
     pointer_type: ($) => prec.right(seq('*', $._type)),
 
@@ -212,8 +226,16 @@ module.exports = grammar({
         $.for_clause_expression,
       ),
 
+    // `Shape::Circle`, `std::printf` or `geo::Shape::Circle`
     scoped_identifier: ($) =>
-      prec(PREC.postfix + 1, seq(field('path', $.identifier), '::', field('name', $.identifier))),
+      prec.left(
+        PREC.postfix + 1,
+        seq(
+          field('path', choice($.identifier, $.scoped_identifier)),
+          '::',
+          field('name', $.identifier),
+        ),
+      ),
 
     at: (_) => '@',
 

@@ -66,6 +66,38 @@ fn clean_documents_have_no_problems() {
 }
 
 #[test]
+fn imports_are_read_from_files_next_to_the_document() {
+    let directory = std::env::temp_dir().join(format!("minlang-lsp-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("geo.pk"),
+        "pub struct Point { x: s32 }\nfn helper() {}\n",
+    )
+    .unwrap();
+    let file = directory.join("main.pk");
+    let file = file.to_str().unwrap();
+
+    let analysis = analyze(
+        "import geo::Point;\nfn f(p: Point) -> s32 { p.x }\n",
+        Some(file),
+    );
+    assert_eq!(analysis.problems, Vec::new());
+    assert!(
+        analysis
+            .hover(1, 8)
+            .is_some_and(|text| text.contains("Point")),
+        "{:?}",
+        analysis.hover(1, 8)
+    );
+
+    let analysis = analyze("import geo::helper;\n", Some(file));
+    assert_eq!(
+        analysis.problems[0].message,
+        "'helper' in 'geo' isn't public; declare it with 'pub' to import it"
+    );
+}
+
+#[test]
 fn problems_from_every_stage() {
     let analysis = analyze("fn f() -> s32 {\n    let a = count;\n    a\n}\n", None);
     let messages: Vec<_> = analysis

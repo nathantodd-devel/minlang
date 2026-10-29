@@ -1,4 +1,4 @@
-//! Builds executables from LLVM IR text using clang.
+//! Builds executables and object files from LLVM IR text using clang.
 
 use std::path::Path;
 use std::process::Command;
@@ -8,27 +8,64 @@ use super::CodegenError;
 /// Compiles LLVM IR text to an executable at `output` with
 /// `clang -O<optimization>`.
 pub fn build_executable(ir: &str, output: &Path, optimization: u8) -> Result<(), CodegenError> {
-    let directory = std::env::temp_dir().join(format!("minlang-{}", std::process::id()));
-    std::fs::create_dir_all(&directory)?;
     let stem = output
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("out");
-    let source = directory.join(format!("{stem}.ll"));
-    std::fs::write(&source, ir)?;
+    link_executable(&[(stem, ir)], output, optimization)
+}
 
-    let result = Command::new("clang")
-        .arg("-x")
-        .arg("ir")
-        .arg(&source)
+/// Compiles several modules, given as `(module name, LLVM IR text)`, each on
+/// its own, and links them into an executable at `output`. The module names
+/// must differ.
+pub fn link_executable(
+    modules: &[(&str, &str)],
+    output: &Path,
+    optimization: u8,
+) -> Result<(), CodegenError> {
+    clang(modules, output, optimization, false)
+}
+
+/// Compiles LLVM IR text to an object file at `output`, for linking later.
+pub fn build_object(ir: &str, output: &Path, optimization: u8) -> Result<(), CodegenError> {
+    let stem = output
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("out");
+    clang(&[(stem, ir)], output, optimization, true)
+}
+
+fn clang(
+    modules: &[(&str, &str)],
+    output: &Path,
+    optimization: u8,
+    object: bool,
+) -> Result<(), CodegenError> {
+    let directory = std::env::temp_dir().join(format!("minlang-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let mut sources = Vec::new();
+    for (name, ir) in modules {
+        let source = directory.join(format!("{name}.ll"));
+        sources.push(source.clone());
+        if let Err(error) = std::fs::write(&source, ir) {
+            remove(&sources, &directory);
+            return Err(error.into());
+        }
+    }
+
+    let mut command = Command::new("clang");
+    command.arg("-x").arg("ir").args(&sources);
+    if object {
+        command.arg("-c");
+    }
+    let result = command
         .arg("-o")
         .arg(output)
         .arg(format!("-O{optimization}"))
         // The module has no target triple, so clang supplies the host's
         .arg("-Wno-override-module")
         .output();
-    let _ = std::fs::remove_file(&source);
-    let _ = std::fs::remove_dir(&directory);
+    remove(&sources, &directory);
 
     let result = result.map_err(|error| CodegenError::Tool {
         tool: "clang".to_owned(),
@@ -47,4 +84,11 @@ pub fn build_executable(ir: &str, output: &Path, optimization: u8) -> Result<(),
         });
     }
     Ok(())
+}
+
+fn remove(sources: &[std::path::PathBuf], directory: &Path) {
+    for source in sources {
+        let _ = std::fs::remove_file(source);
+    }
+    let _ = std::fs::remove_dir(directory);
 }

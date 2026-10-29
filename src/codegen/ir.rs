@@ -267,6 +267,13 @@ pub struct Global {
     pub init: Typed,
 }
 
+/// A global defined in another module: `@name = external global ty`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalGlobal {
+    pub name: String,
+    pub ty: IrType,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDefinition {
     pub name: String,
@@ -278,6 +285,7 @@ pub struct Module {
     pub name: String,
     pub types: Vec<TypeDefinition>,
     pub globals: Vec<Global>,
+    pub external_globals: Vec<ExternalGlobal>,
     pub declarations: Vec<Declaration>,
     pub functions: Vec<Function>,
 }

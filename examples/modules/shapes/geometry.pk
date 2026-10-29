@@ -1,0 +1,41 @@
+// Only `pub` items can be imported by other files
+
+pub struct Point {
+    x: f64,
+    y: f64,
+}
+
+pub enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+}
+
+// How many areas have been computed
+pub let measured: u32 = 0;
+
+fn square(value: f64) -> f64 {
+    value * value
+}
+
+pub fn area(shape: Shape) -> f64 {
+    measured += 1;
+    switch shape {
+        case Shape::Circle(radius) {
+            return 3.0 * square(radius);
+        }
+        case Shape::Rect { w, h } {
+            return w * h;
+        }
+        default {
+            return 0.0;
+        }
+    }
+}
+
+pub fn corners(origin: Point, size: f64) -> iter Point {
+    yield origin;
+    yield Point { x: origin.x + size, y: origin.y };
+    yield Point { x: origin.x + size, y: origin.y + size };
+    yield Point { x: origin.x, y: origin.y + size };
+    return;
+}

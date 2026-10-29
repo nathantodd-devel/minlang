@@ -6,8 +6,9 @@ use std::time::Instant;
 
 use clap::{Parser as ArgParser, Subcommand, ValueEnum};
 
-use minlang::codegen::{self, Backend, TextBackend};
+use minlang::codegen::{self, Backend, TextBackend, mangle};
 use minlang::diagnostic::Renderer;
+use minlang::modules::{self, Imported};
 use minlang::{Ast, CheckedProgram, Checker, GenericError, Parser, TokenStream, Tokenizer};
 
 /// The compiler for minlang, a small C-like language.
@@ -42,12 +43,17 @@ enum Command {
         args: Vec<String>,
     },
 
-    /// Compile a program to an executable
+    /// Compile a program, and the files it imports, to an executable
     Build {
         /// The `.pk` file to compile
         file: PathBuf,
 
-        /// Where to write the executable [default: the file's name, without `.pk`]
+        /// Compile only this file, to an object file, without linking
+        #[arg(short = 'c')]
+        object: bool,
+
+        /// Where to write the executable [default: the file's name, without
+        /// `.pk`, or with `.o` instead for `-c`]
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -100,8 +106,16 @@ enum ColorChoice {
 /// Compiling stopped; the reason has already been printed.
 struct Failed;
 
+/// A file that passed the checker, with the files it imports.
+struct Checked {
+    ast: Ast,
+    program: CheckedProgram,
+    imported: Imported,
+}
+
 /// One source file going through the compiler.
 struct Session {
+    path: PathBuf,
     file: String,
     source: String,
     color: bool,
@@ -121,6 +135,7 @@ impl Session {
 
         match std::fs::read_to_string(path) {
             Ok(source) => Ok(Self {
+                path: path.to_owned(),
                 file,
                 source,
                 color,
@@ -148,7 +163,16 @@ impl Session {
 
     /// Prints each error with its source line, then a summary.
     fn report<K: fmt::Display>(&self, errors: &[GenericError<K>]) -> Failed {
-        let renderer = Renderer::new(&self.source, self.color);
+        self.report_file(&self.file, &self.source, errors)
+    }
+
+    fn report_file<K: fmt::Display>(
+        &self,
+        file: &str,
+        source: &str,
+        errors: &[GenericError<K>],
+    ) -> Failed {
+        let renderer = Renderer::new(source, self.color);
         for error in errors {
             eprintln!("{}\n", renderer.render(error));
         }
@@ -158,7 +182,7 @@ impl Session {
         };
         eprintln!(
             "{}",
-            renderer.header(&format!("could not compile `{}` due to {count}", self.file))
+            renderer.header(&format!("could not compile `{file}` due to {count}"))
         );
         Failed
     }
@@ -180,27 +204,89 @@ impl Session {
             .map_err(|errors| self.report(errors))
     }
 
-    fn check(&self) -> Result<(Ast, CheckedProgram), Failed> {
+    /// Checks the file after the files it imports. If an imported file has
+    /// errors, they're reported instead.
+    fn check(&self) -> Result<Checked, Failed> {
         let ast = self.ast()?;
+        let imported = self.timed("Loading imports", || {
+            modules::load_imports(&self.path, &ast)
+        });
+        let mut failed = None;
+        for file in &imported.files {
+            if !file.errors.is_empty() {
+                failed = Some(self.report_file(&file.name(), &file.source, &file.errors));
+            }
+        }
+        if let Some(failed) = failed {
+            return Err(failed);
+        }
+
+        let imports = imported.imports.clone();
         let program = self
-            .timed("Checking", || Checker::new(Some(&self.file)).check(&ast))
+            .timed("Checking", || {
+                Checker::new(Some(&self.file))
+                    .with_imports(imports)
+                    .check(&ast)
+            })
             .map_err(|errors| self.report(&errors))?;
-        Ok((ast, program))
-    }
-
-    fn llvm(&self) -> Result<String, Failed> {
-        let (ast, program) = self.check()?;
-        self.timed("Generating code", || {
-            codegen::lower(&ast, &program, Some(&self.file))
-                .and_then(|module| TextBackend.emit(&module))
+        Ok(Checked {
+            ast,
+            program,
+            imported,
         })
-        .map_err(|error| self.fail(&error.to_string()))
     }
 
-    fn build(&self, output: &Path, optimization: u8) -> Result<(), Failed> {
-        let ir = self.llvm()?;
+    fn lower(&self, file: &str, ast: &Ast, program: &CheckedProgram) -> Result<String, Failed> {
+        codegen::lower(ast, program, Some(file))
+            .and_then(|module| TextBackend.emit(&module))
+            .map_err(|error| self.fail(&error.to_string()))
+    }
+
+    /// The LLVM IR of this file alone.
+    fn llvm(&self) -> Result<String, Failed> {
+        let checked = self.check()?;
+        self.timed("Generating code", || {
+            self.lower(&self.file, &checked.ast, &checked.program)
+        })
+    }
+
+    /// Builds an executable from this file and the files it imports, or with
+    /// `object`, an object file from this file alone.
+    fn build(&self, output: &Path, optimization: u8, object: bool) -> Result<(), Failed> {
+        let checked = self.check()?;
+        let module = mangle::module_name(Some(&self.file));
+        if let Some((first, second)) = checked.imported.clashing_modules(&module) {
+            let first = if first.is_empty() { &self.file } else { &first };
+            return Err(self.fail(&format!(
+                "`{first}` and `{second}` have the same module name, so their symbols \
+                 would clash; rename one"
+            )));
+        }
+
+        let modules = self.timed("Generating code", || {
+            let mut modules = vec![(
+                module.clone(),
+                self.lower(&self.file, &checked.ast, &checked.program)?,
+            )];
+            if !object {
+                for file in &checked.imported.files {
+                    let ir = self.lower(&file.name(), &file.ast, &file.program)?;
+                    modules.push((file.module.clone(), ir));
+                }
+            }
+            Ok(modules)
+        })?;
+
         self.timed("Building", || {
-            codegen::driver::build_executable(&ir, output, optimization)
+            if object {
+                codegen::driver::build_object(&modules[0].1, output, optimization)
+            } else {
+                let modules: Vec<_> = modules
+                    .iter()
+                    .map(|(name, ir)| (name.as_str(), ir.as_str()))
+                    .collect();
+                codegen::driver::link_executable(&modules, output, optimization)
+            }
         })
         .map_err(|error| self.fail(&error.to_string()))
     }
@@ -228,7 +314,7 @@ fn run(session: &Session, path: &Path, optimization: u8, args: &[String]) -> Res
     let stem = path.file_stem().unwrap_or_default();
     let executable = directory.join(stem);
 
-    let built = session.build(&executable, optimization);
+    let built = session.build(&executable, optimization, false);
     let status = built.and_then(|()| {
         std::process::Command::new(&executable)
             .args(args)
@@ -266,13 +352,18 @@ fn main() -> ExitCode {
             .map(ExitCode::from),
         Command::Build {
             file,
+            object,
             output,
             optimization,
         } => Session::open(file, &cli).and_then(|session| {
-            let output = output
-                .clone()
-                .unwrap_or_else(|| PathBuf::from(file.file_stem().unwrap_or_default()));
-            session.build(&output, *optimization)?;
+            let output = output.clone().unwrap_or_else(|| {
+                let mut stem = file.file_stem().unwrap_or_default().to_owned();
+                if *object {
+                    stem.push(".o");
+                }
+                PathBuf::from(stem)
+            });
+            session.build(&output, *optimization, *object)?;
             Ok(ExitCode::SUCCESS)
         }),
         Command::Check { file } => Session::open(file, &cli).and_then(|session| {

@@ -35,7 +35,7 @@
 
 (scoped_identifier
   path: (identifier) @namespace
-  (#any-of? @namespace "std" "types"))
+  (#match? @namespace "^[a-z_]"))
 (scoped_identifier
   path: (identifier) @type
   (#match? @type "^[A-Z]"))
@@ -62,6 +62,7 @@
 
 ["fn" "struct" "enum"] @keyword.storage.type
 ["let" "const"] @keyword
+"pub" @keyword.storage.modifier
 "import" @keyword.control.import
 ["if" "else" "switch" "case" "default"] @keyword.control.conditional
 ["while" "loop" "do" "for" "in" (break_expression) (continue_expression)] @keyword.control.repeat

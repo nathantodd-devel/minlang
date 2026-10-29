@@ -4,6 +4,7 @@
 //! the compiler's; the server converts them to LSP positions.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use crate::checker::{
     CheckedProgram, Checker, Resolution, Type, VariantShape, is_primitive, module_members,
@@ -197,7 +198,11 @@ pub fn analyze(source: &str, file: Option<&str>) -> Analysis {
     }
     let ast = parser.node.clone();
 
-    let (program, check_errors) = Checker::new(file).check_partial(&ast);
+    // Imported files are read from disk, as last saved
+    let imports = file
+        .map(|file| crate::modules::load_imports(Path::new(file), &ast).imports)
+        .unwrap_or_default();
+    let (program, check_errors) = Checker::new(file).with_imports(imports).check_partial(&ast);
     // Statements the parser skipped make the checker's errors misleading
     if errors.is_empty() && parsed {
         for error in &check_errors {

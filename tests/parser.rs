@@ -77,12 +77,14 @@ fn sexpr(expression: &Expression) -> String {
         E::MemberExpression { target, member } => format!("(. {} {member})", sexpr(target)),
         E::BlockExpression { block } => block_sexpr(block),
         E::LetExpression {
+            public,
             constant,
             name,
             typeinfo,
             value,
         } => format!(
-            "({} {name} {} {})",
+            "({}{} {name} {} {})",
+            if *public { "pub " } else { "" },
             if *constant { "const" } else { "let" },
             typeinfo.as_ref().map_or("_".to_owned(), type_sexpr),
             boxed(value)
@@ -437,6 +439,30 @@ fn let_forms() {
 }
 
 #[test]
+fn pub_declarations() {
+    let ast = ok(
+        "pub fn f() {} pub struct P {} pub enum E { A } pub let a = 1; pub const b = 2; fn g() {}",
+    );
+    let public: Vec<bool> = ast
+        .iter()
+        .map(|item| match &item.kind {
+            ExpressionKind::FunctionDeclarationExpression { public, .. }
+            | ExpressionKind::StructDeclarationExpression { public, .. }
+            | ExpressionKind::EnumDeclarationExpression { public, .. }
+            | ExpressionKind::LetExpression { public, .. } => *public,
+            _ => panic!("expected a declaration"),
+        })
+        .collect();
+    assert_eq!(public, [true, true, true, true, true, false]);
+    assert_eq!(sexpr(&ast[4]), "(pub const b _ 2)");
+
+    assert_eq!(
+        errors("pub if (a) {}"),
+        ["stdin:1:5: Expected 'fn', 'let', 'const', 'struct' or 'enum', but got 'if'"]
+    );
+}
+
+#[test]
 fn types() {
     let render = |source: &str| sexpr(&ok(source)[0]);
     assert_eq!(render("let a: u8[?][?];"), "(let a u8[?][?] _)");
@@ -497,6 +523,7 @@ fn function_declaration() {
         params,
         return_type,
         body,
+        ..
     } = &ast[0].kind
     else {
         panic!("expected function, got {:?}", ast[0].kind);
@@ -542,7 +569,7 @@ fn array_return_type_does_not_swallow_body() {
 fn struct_and_enum() {
     let ast = ok("struct Point { x: f32, y: f32, } enum Color { Red, Green }");
 
-    let ExpressionKind::StructDeclarationExpression { name, fields } = &ast[0].kind else {
+    let ExpressionKind::StructDeclarationExpression { name, fields, .. } = &ast[0].kind else {
         unreachable!()
     };
     assert_eq!(name, "Point");
@@ -555,6 +582,7 @@ fn struct_and_enum() {
         name,
         backing_type,
         variants,
+        ..
     } = &ast[1].kind
     else {
         unreachable!()
@@ -575,6 +603,7 @@ fn enum_with_backing_type_and_values() {
         name,
         backing_type,
         variants,
+        ..
     } = &ast[0].kind
     else {
         unreachable!()

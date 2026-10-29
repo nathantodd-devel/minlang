@@ -3,6 +3,7 @@ pub mod codegen;
 pub mod diagnostic;
 pub mod error;
 pub mod lsp;
+pub mod modules;
 pub mod parser;
 pub mod tokenizer;
 

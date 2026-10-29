@@ -358,7 +358,8 @@ impl Parser {
             || matches!(
                 self.peek_keyword(),
                 Some(
-                    Keyword::Fn
+                    Keyword::Pub
+                        | Keyword::Fn
                         | Keyword::Struct
                         | Keyword::Enum
                         | Keyword::If
@@ -690,6 +691,7 @@ impl Parser {
                 self.position += 1;
                 match keyword {
                     Keyword::Import => self.parse_import()?,
+                    Keyword::Pub => self.parse_public()?,
                     Keyword::Fn => self.parse_function()?,
                     Keyword::Let => self.parse_let(false)?,
                     Keyword::Const => self.parse_let(true)?,
@@ -760,6 +762,41 @@ impl Parser {
         Ok(ExpressionKind::ImportExpression { module, imports })
     }
 
+    /// `pub` followed by a `fn`, `let`, `const`, `struct` or `enum`.
+    fn parse_public(&mut self) -> ParseResult<ExpressionKind> {
+        let mut kind = match self.peek_keyword() {
+            Some(Keyword::Fn) => {
+                self.position += 1;
+                self.parse_function()?
+            }
+            Some(Keyword::Let) => {
+                self.position += 1;
+                self.parse_let(false)?
+            }
+            Some(Keyword::Const) => {
+                self.position += 1;
+                self.parse_let(true)?
+            }
+            Some(Keyword::Struct) => {
+                self.position += 1;
+                self.parse_struct()?
+            }
+            Some(Keyword::Enum) => {
+                self.position += 1;
+                self.parse_enum()?
+            }
+            _ => return Err(self.unexpected("'fn', 'let', 'const', 'struct' or 'enum'")),
+        };
+        match &mut kind {
+            ExpressionKind::FunctionDeclarationExpression { public, .. }
+            | ExpressionKind::LetExpression { public, .. }
+            | ExpressionKind::StructDeclarationExpression { public, .. }
+            | ExpressionKind::EnumDeclarationExpression { public, .. } => *public = true,
+            _ => {}
+        }
+        Ok(kind)
+    }
+
     /// `fn name(a: T, b: U) -> R { ... }`
     fn parse_function(&mut self) -> ParseResult<ExpressionKind> {
         let name = self.expect_identifier()?;
@@ -776,6 +813,7 @@ impl Parser {
         let body = self.parse_block()?;
 
         Ok(ExpressionKind::FunctionDeclarationExpression {
+            public: false,
             name,
             params,
             return_type,
@@ -807,6 +845,7 @@ impl Parser {
         };
 
         Ok(ExpressionKind::LetExpression {
+            public: false,
             constant,
             name,
             typeinfo,
@@ -819,7 +858,11 @@ impl Parser {
         let name = self.expect_identifier()?;
         self.expect(Punctuation::LBrace)?;
         let fields = self.parse_list(Punctuation::RBrace, Self::parse_param)?;
-        Ok(ExpressionKind::StructDeclarationExpression { name, fields })
+        Ok(ExpressionKind::StructDeclarationExpression {
+            public: false,
+            name,
+            fields,
+        })
     }
 
     fn parse_field_init(&mut self) -> ParseResult<FieldInit> {
@@ -843,6 +886,7 @@ impl Parser {
         let variants = self.parse_list(Punctuation::RBrace, Self::parse_enum_variant)?;
 
         Ok(ExpressionKind::EnumDeclarationExpression {
+            public: false,
             name,
             backing_type,
             variants,

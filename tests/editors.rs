@@ -90,6 +90,7 @@ fn helix_highlights_match_the_shared_queries() {
         ("@function.call", "@function"),
         ("@property", "@variable.other.member"),
         ("@keyword.type", "@keyword.storage.type"),
+        ("@keyword.modifier", "@keyword.storage.modifier"),
         ("@keyword.import", "@keyword.control.import"),
         ("@keyword.conditional", "@keyword.control.conditional"),
         ("@keyword.repeat", "@keyword.control.repeat"),

@@ -1363,6 +1363,10 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "scoped_identifier",
+            "named": true
           }
         ]
       }
@@ -1388,6 +1392,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "scoped_identifier",
             "named": true
           }
         ]
@@ -1988,6 +1996,10 @@
   },
   {
     "type": "loop",
+    "named": false
+  },
+  {
+    "type": "pub",
     "named": false
   },
   {

@@ -5,6 +5,7 @@
 
 mod builtins;
 mod errors;
+mod imports;
 mod types;
 
 pub use builtins::BuiltinFunction;
@@ -19,9 +20,11 @@ pub fn is_primitive(name: &str) -> bool {
     builtins::PRIMITIVES.contains(&name)
 }
 pub use errors::*;
+pub use imports::{Imports, Interface};
 pub use types::{IntType, Type};
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use num_bigint::BigInt;
 
@@ -42,7 +45,10 @@ pub type ItemPath = Vec<String>;
 pub struct StructDef {
     pub name: String,
     pub path: ItemPath,
-    /// Where it's declared.
+    /// The module it was imported from, or `None` if it's declared in this
+    /// file.
+    pub module: Option<String>,
+    /// Where it's declared, in its module's file.
     pub position: Location,
     pub fields: Vec<(String, Type)>,
 }
@@ -68,6 +74,9 @@ impl VariantShape {
 pub struct EnumDef {
     pub name: String,
     pub path: ItemPath,
+    /// The module it was imported from, or `None` if it's declared in this
+    /// file.
+    pub module: Option<String>,
     pub position: Location,
     pub backing_type: Option<Type>,
     pub variants: Vec<(String, VariantShape)>,
@@ -90,12 +99,19 @@ impl EnumDef {
 pub struct FunctionDef {
     pub name: String,
     pub path: ItemPath,
+    /// The module it was imported from, or `None` if it's declared in this
+    /// file.
+    pub module: Option<String>,
+    /// Declared `pub`, so other files can call it.
+    pub public: bool,
     pub position: Location,
     pub params: Vec<Type>,
-    /// The variables holding the parameters inside the body.
+    /// The variables holding the parameters inside the body. Empty for
+    /// imported functions.
     pub param_variables: Vec<usize>,
     pub return_type: Option<Type>,
-    /// The id of the declaring expression.
+    /// The id of the declaring expression. Imported functions were declared
+    /// in another file, so theirs is meaningless.
     pub declaration: usize,
 }
 
@@ -118,6 +134,20 @@ pub struct VariableInfo {
     pub constant: bool,
     /// Declared at the top level, outside any function.
     pub global: bool,
+    /// The module it was imported from, or `None` if it's declared in this
+    /// file.
+    pub module: Option<String>,
+    /// Declared `pub`, so other files can use it.
+    pub public: bool,
+}
+
+/// A `pub` item that other files can import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Export {
+    Variable(usize),
+    Function(usize),
+    Struct(usize),
+    Enum(usize),
 }
 
 /// What a name in an expression or pattern refers to.
@@ -152,6 +182,8 @@ pub struct CheckedProgram {
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
     pub functions: Vec<FunctionDef>,
+    /// The `pub` items, by name, in the order they're declared.
+    pub exports: Vec<(String, Export)>,
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +269,13 @@ struct Context {
 
 pub struct Checker {
     filename: Option<String>,
+    /// The files this one may import.
+    imports: Imports,
+    /// Imported file modules, usable as `name::member`.
+    modules: HashMap<String, Rc<Interface>>,
+    /// The local ids of items already imported, so an item reached through
+    /// two imports is one item.
+    imported: HashMap<imports::ItemKey, usize>,
     scopes: Vec<HashMap<String, Symbol>>,
     context: Context,
     assigned: Assigned,
@@ -262,6 +301,9 @@ impl Checker {
 
         Self {
             filename: filename.map(str::to_owned),
+            imports: Imports::new(),
+            modules: HashMap::new(),
+            imported: HashMap::new(),
             scopes: vec![prelude],
             context: Context::default(),
             assigned: Some(HashSet::new()),
@@ -271,6 +313,12 @@ impl Checker {
             item_counts: HashMap::new(),
             errors: Vec::new(),
         }
+    }
+
+    /// Lets the checked file import the file modules in `imports`.
+    pub fn with_imports(mut self, imports: Imports) -> Self {
+        self.imports = imports;
+        self
     }
 
     pub fn check(&mut self, ast: &Ast) -> Result<CheckedProgram, Vec<CheckError>> {
@@ -286,7 +334,8 @@ impl Checker {
     /// for editor tooling.
     pub fn check_partial(&mut self, ast: &Ast) -> (CheckedProgram, Vec<CheckError>) {
         let filename = self.filename.take();
-        *self = Self::new(filename.as_deref());
+        let imports = std::mem::take(&mut self.imports);
+        *self = Self::new(filename.as_deref()).with_imports(imports);
 
         self.scopes.push(HashMap::new());
         self.declare_items(ast);
@@ -377,12 +426,14 @@ impl Checker {
         for item in items.clone() {
             let position = item.position;
             match &item.kind {
-                ExpressionKind::FunctionDeclarationExpression { name, .. } => {
+                ExpressionKind::FunctionDeclarationExpression { public, name, .. } => {
                     let id = self.program.functions.len();
                     let path = self.item_path(name);
                     self.program.functions.push(FunctionDef {
                         name: name.clone(),
                         path,
+                        module: None,
+                        public: *public && self.at_top_level(),
                         position,
                         params: Vec::new(),
                         param_variables: Vec::new(),
@@ -391,32 +442,37 @@ impl Checker {
                     });
                     self.function_ids.insert(item.id, id);
                     self.declare(name, Symbol::Function(id), position);
+                    self.export(*public, name, Export::Function(id), position);
                     functions.push((item, id));
                 }
-                ExpressionKind::StructDeclarationExpression { name, .. } => {
+                ExpressionKind::StructDeclarationExpression { public, name, .. } => {
                     let id = self.program.structs.len();
                     let path = self.item_path(name);
                     self.program.structs.push(StructDef {
                         name: name.clone(),
                         path,
+                        module: None,
                         position,
                         fields: Vec::new(),
                     });
                     self.declare(name, Symbol::Struct(id), position);
+                    self.export(*public, name, Export::Struct(id), position);
                     structs.push((item, id));
                 }
-                ExpressionKind::EnumDeclarationExpression { name, .. } => {
+                ExpressionKind::EnumDeclarationExpression { public, name, .. } => {
                     let id = self.program.enums.len();
                     let path = self.item_path(name);
                     self.program.enums.push(EnumDef {
                         name: name.clone(),
                         path,
+                        module: None,
                         position,
                         backing_type: None,
                         variants: Vec::new(),
                         discriminants: Vec::new(),
                     });
                     self.declare(name, Symbol::Enum(id), position);
+                    self.export(*public, name, Export::Enum(id), position);
                     enums.push((item, id));
                 }
                 ExpressionKind::ImportExpression { module, imports } => {
@@ -461,6 +517,26 @@ impl Checker {
                 function.params = params;
                 function.return_type = return_type;
             }
+        }
+    }
+
+    /// Whether declarations here are at the top level of the file, outside
+    /// any function or block.
+    fn at_top_level(&self) -> bool {
+        // The built-in names, then the file's
+        self.scopes.len() == 2
+    }
+
+    /// Lets other files import the item if it's `pub`, which is only allowed
+    /// at the top level.
+    fn export(&mut self, public: bool, name: &str, export: Export, position: Location) {
+        if !public {
+            return;
+        }
+        if self.at_top_level() {
+            self.program.exports.push((name.to_owned(), export));
+        } else {
+            self.error(CheckErrorKind::MisplacedPub, position);
         }
     }
 
@@ -533,19 +609,14 @@ impl Checker {
     }
 
     fn declare_import(&mut self, module: &[String], imports: &[String], position: Location) {
-        // `import std;` names a module, which is always visible anyway
-        if module.is_empty() {
-            for name in imports {
-                if builtins::module(name).is_none() {
-                    self.error(CheckErrorKind::UnknownModule(name.clone()), position);
-                }
-            }
+        // `import std;` names a built-in module, which is always visible anyway
+        if module.is_empty() && imports.iter().all(|name| builtins::module(name).is_some()) {
             return;
         }
 
         let module_name = module.join("::");
         let Some(module) = builtins::module(&module_name) else {
-            self.error(CheckErrorKind::UnknownModule(module_name), position);
+            self.declare_file_import(module, imports, position);
             return;
         };
 
@@ -580,44 +651,57 @@ impl Checker {
             },
             [container, member] => match self.lookup(container) {
                 Some(Symbol::Enum(enum_id)) => {
-                    let variant = self.program.enums[enum_id]
-                        .variants
-                        .iter()
-                        .position(|(name, _)| name == member);
-                    match variant {
-                        Some(index) => Some(Resolved::Variant {
-                            path: path.to_owned(),
-                            enum_id,
-                            index,
-                            shape: self.program.enums[enum_id].variants[index].1.clone(),
-                        }),
-                        None => {
-                            self.unknown_member(container, member, position);
-                            None
-                        }
-                    }
+                    self.resolve_variant(container, enum_id, member, position)
                 }
                 Some(_) => {
                     self.error(CheckErrorKind::NoMembers((*container).to_owned()), position);
                     None
                 }
-                None => match builtins::module(container) {
-                    Some(module) => match module.member(member) {
-                        Some(member) => Some(Resolved::Symbol(member.into())),
-                        None => {
-                            self.unknown_member(container, member, position);
-                            None
-                        }
-                    },
-                    None => {
-                        let name = (*container).to_owned();
-                        self.error(CheckErrorKind::UndefinedName(name), position);
+                None => self.resolve_module_member(container, member, position),
+            },
+            // `geo::Shape::Circle`, a variant of an enum in an imported module
+            [module, container, member]
+                if self.lookup(module).is_none() && self.modules.contains_key(*module) =>
+            {
+                let path = format!("{module}::{container}");
+                match self.resolve_module_member(module, container, position)? {
+                    Resolved::Symbol(Symbol::Enum(enum_id)) => {
+                        self.resolve_variant(&path, enum_id, member, position)
+                    }
+                    _ => {
+                        self.error(CheckErrorKind::NoMembers(path), position);
                         None
                     }
-                },
-            },
+                }
+            }
             _ => {
                 self.error(CheckErrorKind::UndefinedName(path.to_owned()), position);
+                None
+            }
+        }
+    }
+
+    /// Resolves `member` of the enum `container`.
+    fn resolve_variant(
+        &mut self,
+        container: &str,
+        enum_id: usize,
+        member: &str,
+        position: Location,
+    ) -> Option<Resolved> {
+        let variant = self.program.enums[enum_id]
+            .variants
+            .iter()
+            .position(|(name, _)| name == member);
+        match variant {
+            Some(index) => Some(Resolved::Variant {
+                path: format!("{container}::{member}"),
+                enum_id,
+                index,
+                shape: self.program.enums[enum_id].variants[index].1.clone(),
+            }),
+            None => {
+                self.unknown_member(container, member, position);
                 None
             }
         }
@@ -860,6 +944,8 @@ impl Checker {
             ty,
             constant,
             global: self.function_depth() == 0,
+            module: None,
+            public: false,
         });
         id
     }
@@ -1044,12 +1130,14 @@ impl Checker {
                 Type::Void
             }
             ExpressionKind::LetExpression {
+                public,
                 constant,
                 name,
                 typeinfo,
                 value,
             } => {
                 self.check_let(
+                    *public,
                     *constant,
                     name,
                     typeinfo.as_ref(),
@@ -1438,8 +1526,10 @@ impl Checker {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_let(
         &mut self,
+        public: bool,
         constant: bool,
         name: &str,
         typeinfo: Option<&TypeInfo>,
@@ -1497,6 +1587,8 @@ impl Checker {
         };
 
         self.program.variables[variable].ty = ty;
+        self.program.variables[variable].public = public && self.at_top_level();
+        self.export(public, name, Export::Variable(variable), position);
         self.bind_variable(variable, position);
         if value.is_some() || initialized {
             self.mark_assigned(variable);

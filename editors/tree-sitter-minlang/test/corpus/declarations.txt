@@ -21,6 +21,43 @@ import types::*;
     (glob)))
 
 ================================================================================
+Public declarations
+================================================================================
+
+import shapes::geo;
+pub fn f() {}
+pub struct P { x: f32 }
+pub enum E { A }
+pub const N: u32 = 4;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (import_declaration
+    (identifier)
+    (identifier))
+  (function_item
+    (identifier)
+    (parameters)
+    (block))
+  (struct_item
+    (type_identifier)
+    (field_declaration_list
+      (field_declaration
+        (field_identifier)
+        (primitive_type))))
+  (enum_item
+    (type_identifier)
+    (enum_variant_list
+      (enum_variant
+        (identifier))))
+  (expression_statement
+    (let_declaration
+        (identifier)
+      (primitive_type)
+      (integer_literal))))
+
+================================================================================
 Functions, structs and enums
 ================================================================================
 

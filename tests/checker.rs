@@ -177,7 +177,7 @@ fn imported_names_need_an_import() {
 fn import_errors() {
     assert_eq!(
         check("import nope::x;"),
-        ["stdin:1:1: Unknown module 'nope'"]
+        ["stdin:1:1: Unknown module 'nope': there's no file 'nope.pk' next to this one"]
     );
     assert_eq!(
         check("import std::{printf, nope};"),
@@ -223,6 +223,23 @@ fn types_are_not_values() {
             "stdin:1:30: 'P' is a type, not a value",
             "stdin:1:33: 'P' is a type, not a value"
         ]
+    );
+}
+
+#[test]
+fn pub_only_at_the_top_level() {
+    ok("pub fn f() {} pub struct P {} pub enum E { A } pub let a = 1; pub const b = 2;");
+    assert_eq!(
+        check_body("pub let x = 1; pub fn g() {} pub struct Q {}"),
+        [
+            "'pub' is only allowed on top-level declarations",
+            "'pub' is only allowed on top-level declarations",
+            "'pub' is only allowed on top-level declarations"
+        ]
+    );
+    assert_eq!(
+        check("let a = { pub const b = 1; b };"),
+        ["stdin:1:11: 'pub' is only allowed on top-level declarations"]
     );
 }
 

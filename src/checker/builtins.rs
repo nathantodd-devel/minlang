@@ -1,5 +1,6 @@
-//! Names the language provides without any declaration. There are no module
-//! files yet, so the modules a program can import are listed here.
+//! Names the language provides without any declaration, including the
+//! built-in modules `std` and `types`. Other modules are files; see
+//! `crate::modules`.
 
 use super::types::{IntType, Type};
 

@@ -151,6 +151,7 @@ string_enum!(Keyword {
     Yield = "yield",
     Iter = "iter",
     As = "as",
+    Pub = "pub",
 });
 
 string_enum!(Punctuation {

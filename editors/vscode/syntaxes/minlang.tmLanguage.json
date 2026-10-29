@@ -71,6 +71,10 @@
         {
           "match": "\\b(import)\\b",
           "name": "keyword.control.import.minlang"
+        },
+        {
+          "match": "\\b(pub)\\b",
+          "name": "storage.modifier.minlang"
         }
       ]
     },
@@ -105,7 +109,7 @@
     "paths": {
       "patterns": [
         {
-          "match": "\\b(std|types)(::)",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)(::)",
           "captures": {
             "1": { "name": "entity.name.namespace.minlang" },
             "2": { "name": "punctuation.separator.namespace.minlang" }

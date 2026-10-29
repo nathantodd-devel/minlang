@@ -1,0 +1,17 @@
+// Imports name files relative to this one: `shapes::geometry` is
+// `shapes/geometry.pk`.
+import std::printf;
+import shapes::geometry;
+import shapes::geometry::{Point, Shape, area};
+
+fn main() -> s32 {
+    printf("%.1f\n", area(Shape::Circle(2.0)));
+    printf("%.1f\n", area(geometry::Shape::Rect { w: 2.0, h: 3.0 }));
+
+    for corner in geometry::corners(Point { x: 1.0, y: 1.0 }, 2.0) {
+        printf("(%.0f, %.0f)\n", corner.x, corner.y);
+    }
+
+    printf("measured %u shapes\n", geometry::measured);
+    0
+}

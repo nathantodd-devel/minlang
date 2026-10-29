@@ -11,8 +11,8 @@ use num_bigint::BigInt;
 
 use super::CodegenError;
 use super::ir::{
-    Block, Declaration, Function, Global, Instruction, IrType, Linkage, Module, Terminator,
-    TypeDefinition, Typed, Value,
+    Block, Declaration, ExternalGlobal, Function, Global, Instruction, IrType, Linkage, Module,
+    Terminator, TypeDefinition, Typed, Value,
 };
 use super::layout::{self, NamedTypes};
 use super::mangle;
@@ -180,7 +180,7 @@ impl<'a> Lowerer<'a> {
 
         for definition in &program.structs {
             self.struct_types.push(mangle::type_name(
-                &self.module_name,
+                self.module_of(&definition.module),
                 &definition.path,
                 &definition.name,
             ));
@@ -195,7 +195,11 @@ impl<'a> Lowerer<'a> {
                 self.enum_layouts.push(EnumLayout::Plain(tag));
                 continue;
             }
-            let name = mangle::type_name(&self.module_name, &definition.path, &definition.name);
+            let name = mangle::type_name(
+                self.module_of(&definition.module),
+                &definition.path,
+                &definition.name,
+            );
             self.enum_layouts.push(EnumLayout::Tagged {
                 name,
                 tag,
@@ -248,6 +252,11 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The module an item is declared in, given its `module` field.
+    fn module_of<'b>(&'b self, module: &'b Option<String>) -> &'b str {
+        module.as_deref().unwrap_or(&self.module_name)
+    }
+
     fn ir_type(&self, ty: &Type) -> IrType {
         match ty {
             Type::Int(int) => IrType::Int(u32::from(int_bits(*int))),
@@ -277,14 +286,17 @@ impl<'a> Lowerer<'a> {
     fn name_functions(&mut self, ast: &Ast) {
         let program = self.program;
         for (id, function) in program.functions.iter().enumerate() {
-            self.function_ids.insert(function.declaration, id);
+            let imported = function.module.is_some();
+            if !imported {
+                self.function_ids.insert(function.declaration, id);
+            }
             let is_main = function.name == "main" && function.path.is_empty();
-            let top_level = ast.iter().any(|item| item.id == function.declaration);
+            let top_level = !imported && ast.iter().any(|item| item.id == function.declaration);
             let name = if is_main && top_level {
                 "main".to_owned()
             } else {
                 mangle::function(
-                    &self.module_name,
+                    self.module_of(&function.module),
                     &function.path,
                     &function.name,
                     &function.params,
@@ -296,6 +308,8 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_module(&mut self, ast: &'a Ast) {
+        self.declare_imports();
+
         for item in ast {
             match &item.kind {
                 ExpressionKind::FunctionDeclarationExpression { .. } => self.pending.push(item),
@@ -315,6 +329,32 @@ impl<'a> Lowerer<'a> {
         }
 
         self.lower_global_initializer();
+    }
+
+    /// Declares the imported functions and globals, which other modules
+    /// define.
+    fn declare_imports(&mut self) {
+        let program = self.program;
+        for (id, function) in program.functions.iter().enumerate() {
+            if function.module.is_none() {
+                continue;
+            }
+            let return_type = match &function.return_type {
+                Some(ty) => self.ir_type(ty),
+                None => IrType::Void,
+            };
+            let params = function.params.iter().map(|ty| self.ir_type(ty)).collect();
+            let name = self.function_names[id].clone();
+            self.declare(&name, return_type, params, false);
+        }
+        for (variable, info) in program.variables.iter().enumerate() {
+            if info.module.is_some() {
+                self.module.external_globals.push(ExternalGlobal {
+                    name: self.global_name(variable),
+                    ty: self.ir_type(&info.ty),
+                });
+            }
+        }
     }
 
     fn declare(&mut self, name: &str, return_type: IrType, params: Vec<IrType>, variadic: bool) {
@@ -353,7 +393,8 @@ impl<'a> Lowerer<'a> {
     }
 
     fn global_name(&self, variable: usize) -> String {
-        mangle::global(&self.module_name, &self.program.variables[variable].name)
+        let info = &self.program.variables[variable];
+        mangle::global(self.module_of(&info.module), &info.name)
     }
 
     fn lower_global(
@@ -386,7 +427,11 @@ impl<'a> Lowerer<'a> {
         let name = self.global_name(variable);
         self.module.globals.push(Global {
             name,
-            linkage: Linkage::Internal,
+            linkage: if self.program.variables[variable].public {
+                Linkage::External
+            } else {
+                Linkage::Internal
+            },
             constant: false,
             unnamed_addr: false,
             init: Typed::new(ir_type, init),
@@ -497,7 +542,7 @@ impl<'a> Lowerer<'a> {
             self.end_generator();
         }
 
-        let linkage = if is_main {
+        let linkage = if is_main || function.public {
             Linkage::External
         } else {
             Linkage::Internal

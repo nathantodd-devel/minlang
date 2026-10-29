@@ -179,3 +179,125 @@ fn build_names_the_output_after_the_file() {
     let built = Command::new(directory.join("structs")).output().unwrap();
     assert!(stdout(&built).starts_with("area: 10.000000\n"));
 }
+
+/// Writes `files`, as (relative path, source), into a scratch directory.
+fn write_project(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let directory = scratch(name);
+    let _ = std::fs::remove_dir_all(&directory);
+    for (path, source) in files {
+        let path = directory.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    directory
+}
+
+const GEO: &str = "pub struct Point { x: s32, y: s32 }
+pub fn add(a: Point, b: Point) -> Point { Point { x: a.x + b.x, y: a.y + b.y } }
+";
+
+const MAIN: &str = "import std::printf;
+import shapes::geo;
+
+fn main() -> s32 {
+    let p: geo::Point = geo::add(geo::Point { x: 1, y: 2 }, geo::Point { x: 3, y: 4 });
+    printf(\"%d %d\\n\", p.x, p.y);
+    0
+}
+";
+
+#[test]
+fn run_links_imported_files() {
+    if !have_clang() {
+        return;
+    }
+    let directory = write_project("imports", &[("shapes/geo.pk", GEO), ("main.pk", MAIN)]);
+    let output = minlang(&["run", directory.join("main.pk").to_str().unwrap()]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "4 6\n");
+}
+
+#[test]
+fn build_c_compiles_one_file_to_an_object() {
+    if !have_clang() {
+        return;
+    }
+    let directory = write_project("objects", &[("shapes/geo.pk", GEO), ("main.pk", MAIN)]);
+    let build = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_minlang"))
+            .args(args)
+            .current_dir(&directory)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+    };
+    // Named after the file, with `.o`, unless `-o` says otherwise
+    build(&["build", "-c", "main.pk"]);
+    build(&["build", "-c", "shapes/geo.pk", "-o", "geo-object.o"]);
+    assert!(directory.join("main.o").is_file());
+
+    let link = Command::new("clang")
+        .args(["main.o", "geo-object.o", "-o", "linked"])
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(link.status.success(), "{}", stderr(&link));
+    let output = Command::new(directory.join("linked")).output().unwrap();
+    assert_eq!(stdout(&output), "4 6\n");
+}
+
+#[test]
+fn errors_in_imported_files_show_their_source() {
+    let directory = write_project(
+        "import-errors",
+        &[
+            ("geo.pk", "pub fn f() -> s32 {\n    count\n}\n"),
+            ("main.pk", "import geo::f;\n"),
+        ],
+    );
+    let output = minlang(&["check", directory.join("main.pk").to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+    let geo = directory.join("geo.pk");
+    let geo = geo.display();
+    let expected = format!(
+        "error: Undefined name 'count'\n \
+         --> {geo}:2:5\n  \
+         |\n\
+         2 |     count\n  \
+         |     ^^^^^\n\n\
+         error: could not compile `{geo}` due to an error\n"
+    );
+    assert_eq!(stderr(&output), expected);
+}
+
+#[test]
+fn modules_with_the_same_name_are_rejected() {
+    let directory = write_project(
+        "clash",
+        &[
+            ("a/geo.pk", "pub fn f() {}"),
+            (
+                "geo.pk",
+                "import a::geo; pub fn main() -> s32 { geo::f(); 0 }",
+            ),
+        ],
+    );
+    let output = minlang(&["build", directory.join("geo.pk").to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("have the same module name"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn modules_example_produces_expected_output() {
+    if !have_clang() {
+        return;
+    }
+    let output = minlang(&["run", "examples/modules/main.pk"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let expected = std::fs::read_to_string("examples/modules/main.out").unwrap();
+    assert_eq!(stdout(&output), expected);
+}

@@ -195,7 +195,10 @@ pub enum ExpressionKind {
     },
     /// `@`: the value currently being initialized.
     AtExpression,
+    /// `fn`, `let`, `const`, `struct` and `enum` take `public` from a leading
+    /// `pub`, which lets other files import them.
     FunctionDeclarationExpression {
+        public: bool,
         name: String,
         params: Vec<Param>,
         return_type: Option<TypeInfo>,
@@ -203,18 +206,21 @@ pub enum ExpressionKind {
     },
     /// `let x: T = v` or `const x: T = v`
     LetExpression {
+        public: bool,
         constant: bool,
         name: String,
         typeinfo: Option<TypeInfo>,
         value: Option<Box<Expression>>,
     },
     StructDeclarationExpression {
+        public: bool,
         name: String,
         fields: Vec<Param>,
     },
     /// `enum Name: u8 { A = 1, B }`, with the backing type and values
     /// optional.
     EnumDeclarationExpression {
+        public: bool,
         name: String,
         backing_type: Option<TypeInfo>,
         variants: Vec<EnumVariant>,

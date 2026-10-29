@@ -451,10 +451,18 @@ pub fn module_text(module: &Module) -> String {
         }
     }
 
-    if !module.globals.is_empty() {
+    if !module.globals.is_empty() || !module.external_globals.is_empty() {
         text.push('\n');
         for global in &module.globals {
             let _ = writeln!(text, "{}", global_text(global));
+        }
+        for global in &module.external_globals {
+            let _ = writeln!(
+                text,
+                "{} = external global {}",
+                name('@', &global.name),
+                type_text(&global.ty)
+            );
         }
     }
 
