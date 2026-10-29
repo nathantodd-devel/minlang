@@ -653,6 +653,17 @@ fn literals_take_the_expected_type() {
 }
 
 #[test]
+fn character_literals_are_integers() {
+    ok_body(
+        "let a: u8 = 'a'; let b: s8 = '0'; let c = 'z' - 'a'; let d: s64 = c; let e: u8 = a - '0';",
+    );
+    assert_eq!(
+        check_body("let a: u8[?] = 'a'; let b: f32 = '\\n';"),
+        ["Expected 'u8[?]', found 'integer'"]
+    );
+}
+
+#[test]
 fn literals_must_fit() {
     assert_eq!(check_body("let a: u8 = 256;"), ["256 does not fit in 'u8'"]);
     assert_eq!(check_body("let a: u8 = -1;"), ["-1 does not fit in 'u8'"]);
@@ -857,6 +868,25 @@ fn builtin_function_signatures() {
         [
             "Cannot pass a 'P' as an extra argument to a C function",
             "Cannot pass a 'iter s32' as an extra argument to a C function"
+        ]
+    );
+}
+
+#[test]
+fn void_pointers() {
+    ok("import std::{malloc, free, memcpy, time};
+        fn f(p: &s32) { let a: *s32 = malloc(4); let b: u8[?] = malloc(8);
+                        let buffer: u8[4]{0}; memcpy(buffer, p, 4); memcpy(a, b, 4);
+                        free(a); free(b); let t: s64 = time(0); }");
+    ok("import std::malloc; fn f() { let p = malloc(4) as *s32; let n = malloc(4) as usize; }");
+    assert_eq!(
+        messages(
+            "import std::{malloc, free}; fn f() { let x: s32 = malloc(4); free(1); free(2.0); }"
+        ),
+        [
+            "Expected 's32', found '*void'",
+            "Expected '*void', found 'integer'",
+            "Expected '*void', found 'float'"
         ]
     );
 }

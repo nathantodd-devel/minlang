@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#characters" },
     { "include": "#numbers" },
     { "include": "#declarations" },
     { "include": "#keywords" },
@@ -28,6 +29,13 @@
       "patterns": [
         { "name": "constant.character.escape.minlang", "match": "\\\\." }
       ]
+    },
+    "characters": {
+      "name": "string.quoted.single.minlang",
+      "match": "'([^'\\\\]|\\\\.)'",
+      "captures": {
+        "0": { "patterns": [{ "name": "constant.character.escape.minlang", "match": "\\\\." }] }
+      }
     },
     "numbers": {
       "patterns": [

@@ -57,6 +57,9 @@ fn clang(
     command.arg("-x").arg("ir").args(&sources);
     if object {
         command.arg("-c");
+    } else {
+        // `std`'s math functions are in libm
+        command.arg("-lm");
     }
     let result = command
         .arg("-o")

@@ -99,6 +99,17 @@ pub enum Type {
 }
 
 impl Type {
+    /// C's `void *`, which libc functions take and return. Any pointer,
+    /// reference or array converts to it, and it converts to any pointer or
+    /// `T[?]`. It can't be written in source.
+    pub fn void_pointer() -> Self {
+        Self::Pointer(Box::new(Self::Void))
+    }
+
+    pub fn is_void_pointer(&self) -> bool {
+        matches!(self, Self::Pointer(pointee) if **pointee == Self::Void)
+    }
+
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,

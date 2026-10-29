@@ -86,6 +86,7 @@ fn helix_highlights_match_the_shared_queries() {
         ("@number", "@constant.numeric.integer"),
         ("@boolean", "@constant.builtin.boolean"),
         ("@string.escape", "@constant.character.escape"),
+        ("@character", "@constant.character"),
         ("@module", "@namespace"),
         ("@function.call", "@function"),
         ("@property", "@variable.other.member"),

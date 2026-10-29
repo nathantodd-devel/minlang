@@ -828,8 +828,8 @@ impl CheckedProgram {
 impl Checker {
     /// Whether a value of type `found` can be used where `expected` is wanted
     /// without a cast: the same type, a lossless widening, an untyped literal
-    /// that fits, an array passed where its size is unknown, or `&T` where `*T`
-    /// is wanted.
+    /// that fits, an array passed where its size is unknown, `&T` where `*T`
+    /// is wanted, or a conversion to or from C's `void *`.
     fn assignable(&self, found: &Type, expected: &Type) -> bool {
         match (found, expected) {
             (Type::Unknown, _) | (_, Type::Unknown) | (Type::Never, _) => true,
@@ -840,6 +840,16 @@ impl Checker {
             }
             (Type::UntypedInt(_) | Type::UntypedFloat, Type::Float(_)) => true,
             (Type::Array { .. }, Type::Array { .. }) => array_compatible(found, expected),
+            (Type::Pointer(_) | Type::Reference(_) | Type::Array { .. }, to)
+                if to.is_void_pointer() =>
+            {
+                true
+            }
+            // `0` is C's null pointer, as in `time(0)`
+            (Type::UntypedInt(Some(value)), to) if to.is_void_pointer() => *value == 0.into(),
+            (from, Type::Pointer(_) | Type::Array { size: None, .. }) if from.is_void_pointer() => {
+                true
+            }
             (Type::Reference(from), Type::Pointer(to)) => from == to,
             _ => found == expected,
         }

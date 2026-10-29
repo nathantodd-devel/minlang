@@ -11,6 +11,9 @@ pub enum TokenizerErrorKind {
     UnexpectedCharacter(char),
     InvalidNumericLiteral(String),
     UnterminatedString,
+    UnterminatedCharacter,
+    /// A character literal that isn't one ASCII character, like `''` or `'ab'`.
+    InvalidCharacter(String),
 }
 
 impl fmt::Display for TokenizerErrorKind {
@@ -26,6 +29,11 @@ impl fmt::Display for TokenizerErrorKind {
             Self::UnexpectedCharacter(char) => write!(f, "Unexpected character '{char}'"),
             Self::InvalidNumericLiteral(message) => f.write_str(message),
             Self::UnterminatedString => f.write_str("Unterminated string literal"),
+            Self::UnterminatedCharacter => f.write_str("Unterminated character literal"),
+            Self::InvalidCharacter(raw) => write!(
+                f,
+                "Invalid character literal {raw}: it must be one ASCII character or escape"
+            ),
         }
     }
 }

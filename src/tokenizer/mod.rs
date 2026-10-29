@@ -124,8 +124,13 @@ impl Tokenizer {
                 continue;
             }
 
-            if char == '"' || char == '\'' {
+            if char == '"' {
                 col = self.tokenize_string(source, line, col);
+                continue;
+            }
+
+            if char == '\'' {
+                col = self.tokenize_char(source, line, col);
                 continue;
             }
 
@@ -464,22 +469,7 @@ impl Tokenizer {
                     return source.len();
                 };
 
-                match next {
-                    'n' => value.push('\n'),
-                    'r' => value.push('\r'),
-                    't' => value.push('\t'),
-                    '\\' => value.push('\\'),
-                    '"' => value.push('"'),
-                    '0' => value.push('\0'),
-                    _ => {
-                        self.error(
-                            TokenizerErrorKind::InvalidEscapeSequence(format!("\\{next}")),
-                            line,
-                            col,
-                        );
-                        value.push(next);
-                    }
-                }
+                value.push(self.escape(next, line, col));
 
                 col += 2;
                 continue;
@@ -492,5 +482,72 @@ impl Tokenizer {
         self.error(TokenizerErrorKind::UnterminatedString, line, start);
 
         source.len()
+    }
+
+    /// A character literal like `'a'` or `'\n'`, which is an unsuffixed
+    /// integer literal holding the character's byte, so its type comes from
+    /// context like `97`'s would.
+    fn tokenize_char(&mut self, source: &[char], line: usize, start: usize) -> usize {
+        let mut end = start + 1;
+        loop {
+            match source.get(end) {
+                Some('\'') => break,
+                Some('\\') if source.get(end + 1).is_some_and(|&next| next != '\n') => end += 2,
+                Some('\n') | None => {
+                    self.error(TokenizerErrorKind::UnterminatedCharacter, line, start);
+                    return end;
+                }
+                Some(_) => end += 1,
+            }
+        }
+        let raw = slice(source, start, end + 1);
+
+        let value = match &source[start + 1..end] {
+            ['\\', next] => self.escape(*next, line, start + 1),
+            [char] => *char,
+            _ => {
+                self.error(TokenizerErrorKind::InvalidCharacter(raw), line, start);
+                return end + 1;
+            }
+        };
+        if !value.is_ascii() {
+            self.error(TokenizerErrorKind::InvalidCharacter(raw), line, start);
+            return end + 1;
+        }
+
+        self.push(
+            TokenKind::IntegerLiteral {
+                base: 10,
+                size: 32,
+                signed: true,
+                value: BigUint::from(u32::from(value)),
+                suffixed: false,
+            },
+            line,
+            start,
+            raw,
+        );
+        end + 1
+    }
+
+    /// The character `\\next` stands for in a string or character literal.
+    fn escape(&mut self, next: char, line: usize, col: usize) -> char {
+        match next {
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '\\' => '\\',
+            '"' => '"',
+            '\'' => '\'',
+            '0' => '\0',
+            _ => {
+                self.error(
+                    TokenizerErrorKind::InvalidEscapeSequence(format!("\\{next}")),
+                    line,
+                    col,
+                );
+                next
+            }
+        }
     }
 }

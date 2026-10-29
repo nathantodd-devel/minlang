@@ -1,0 +1,26 @@
+import std::*;
+
+fn main() -> s32 {
+    // `void *` converts to and from pointers and `T[?]`
+    let numbers: s32[?] = calloc(8, 4);
+    memset(numbers, 0, 32);
+    numbers[2] = 7;
+    printf("%d %d\n", numbers[0], numbers[2]);
+    free(numbers);
+
+    // Strings
+    let name: u8[16]{0};
+    strcpy(name, "hello");
+    strcat(name, " libc");
+    let copy = strdup(name);
+    printf("%s %lu %d %d\n", copy, strlen(name), strcmp(copy, name), toupper(97));
+    free(copy);
+
+    // `0` is a null pointer
+    printf("%ld %ld\n", atol("12345"), strtol("ff", 0, 16));
+
+    // Math, which needs libm
+    let x = 2.0;
+    printf("%.3f %.1f %.2f %d\n", sqrt(x), pow(x, 10.0), floorf(2.5f32), abs(-5));
+    0
+}

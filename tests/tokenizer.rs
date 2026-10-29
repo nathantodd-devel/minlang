@@ -103,6 +103,38 @@ fn unterminated_string() {
 }
 
 #[test]
+fn character_literals_are_unsuffixed_integers() {
+    let tokens = ok(r#"'0' 'a' '\n' '\'' '\\' '\0' '\"' '\''"#);
+    let values = [48, 97, 10, 39, 92, 0, 34, 39];
+    assert_eq!(tokens.len(), values.len());
+    for (token, value) in tokens.iter().zip(values) {
+        assert_int(token, value, 10, 32, true);
+    }
+    assert!(!suffixed("'a'"));
+    assert_eq!(tokens[0].raw, "'0'");
+}
+
+#[test]
+fn invalid_character_literals() {
+    for source in ["''", "'ab'", "'é'", r"'\q'", "'a", "'\n'", r#"'\"#] {
+        assert_err(source);
+    }
+}
+
+#[test]
+fn single_quotes_no_longer_make_strings() {
+    assert_err("'hello'");
+}
+
+#[test]
+fn strings_can_escape_single_quotes() {
+    let TokenKind::StringLiteral { value } = &ok(r#""it\'s""#)[0].kind else {
+        panic!("expected a string");
+    };
+    assert_eq!(value, "it's");
+}
+
+#[test]
 fn weird_float_syntax() {
     let tokens = ok("let float6 = 2f32;");
     assert_eq!(tokens[3].kind.token_type(), TokenType::FloatLiteral);

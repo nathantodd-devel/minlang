@@ -66,6 +66,14 @@ impl<'a> Lowerer<'a> {
         if let (Type::Array { size: None, .. }, Type::Array { size: Some(_), .. }) = (want, &from) {
             return Typed::ptr(self.place(e));
         }
+        if want.is_void_pointer() {
+            if let Type::Array { size: Some(_), .. } = from {
+                return Typed::ptr(self.place(e));
+            }
+            if self.natural(e, None).is_integer() {
+                return Typed::ptr(Value::Null);
+            }
+        }
 
         match self.expr(e, Some(want)) {
             Some(value) => self.convert(value, &from, want),

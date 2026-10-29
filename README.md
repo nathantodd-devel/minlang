@@ -183,7 +183,7 @@ block's last expression, if it has no trailing `;`, is the block's value.
 | Assignment | `x = 1;` and compound forms `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 | Cast | `x as u8` |
 | Block | `{ strcat(@, "hi"); @ }`, where `@` is the value being initialized |
-| Literals | `42` `0xffu8` `2.5f32` `"text"` `true` `false` |
+| Literals | `42` `0xffu8` `2.5f32` `'a'` `'\n'` `"text"` `true` `false` |
 
 The built-in types are `u8` `u16` `u32` `u64` `usize` `s8` `s16` `s32` `s64`
 `f32` `f64` and `bool`; they need no import. Types are named (`s32`, `types::Foo`), pointers (`*T`), references (`&T`),
@@ -289,6 +289,10 @@ must fit that type (`let a: u8 = 256;` is an error). Where nothing is
 expected it defaults to `s32` or `f64`. A suffix fixes the type: `2u8`. A
 string literal is a null-terminated `u8[N]`, where `N` counts the terminator,
 so `"hello"` is a `u8[6]`. Any `u8[N]` can be passed where `u8[?]` is expected.
+A character literal is one ASCII character or escape in single quotes, and is
+a number without a suffix holding its code: `'0'` is `48`, so `c - '0'` and
+`c == '\n'` work for a `u8` `c`, and `toupper('a')` passes an `s32`. Strings
+and characters share the escapes `\n` `\r` `\t` `\\` `\0` `\"` and `\'`.
 
 **Conversions.** Only conversions that can't lose information happen
 implicitly: `u8` to `u32`, `u8` to `s16`, `s8` to `s64`, `u32` to `usize`,
@@ -341,8 +345,16 @@ Global variables start out zeroed, so they're always considered assigned.
 - A `case` that binds names can't be reached by falling through from the case
   before it.
 
-`std` contains `printf` and `strcat`; their arguments aren't checked and their
-results have an unknown type. `types` contains the built-in types.
+`std` is the C library: about 200 functions from `stdio.h`, `stdlib.h`,
+`string.h`, `ctype.h`, `math.h`, `unistd.h` and `time.h`, with their C
+signatures (see `LIBC` in `src/checker/builtins.rs`). `int` is `s32`, `long`
+is `s64`, `size_t` is `usize`, `double` is `f64` and `char *` is `u8[?]`.
+Other pointers (`void *`, `FILE *`, `char **`) are `*void`, which can't be
+written but accepts any pointer, reference or array, and converts to any
+`*T` or `T[?]`: `let numbers: s32[?] = malloc(32);`. A literal `0` passed as a
+`*void` is the null pointer: `time(0)`. Functions that take function pointers
+(`qsort`) or a `va_list` aren't included. Executables link libm. `types`
+contains the built-in types.
 
 ## Code generation
 

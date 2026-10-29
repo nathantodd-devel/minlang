@@ -1,0 +1,19 @@
+import std::{printf, toupper, isdigit};
+
+// Character literals are integers that take their type from context
+fn parse(digits: u8[?]) -> u64 {
+    let n: u64 = 0;
+    for (let i: usize = 0; digits[i] != '\0'; i++) {
+        if (isdigit(digits[i]) != 0) {
+            n = n * 10 + (digits[i] - '0');
+        }
+    }
+    n
+}
+
+fn main() -> s32 {
+    let quote: u8 = '\'';
+    let tab: s8 = '\t';
+    printf("%lu %c%c %d %d %d\n", parse("4,096"), toupper('a'), quote, tab, '\\', 'z' - 'a');
+    0
+}

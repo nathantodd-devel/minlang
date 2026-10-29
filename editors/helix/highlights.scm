@@ -7,6 +7,7 @@
 ; Literals
 
 (string_literal) @string
+(char_literal) @constant.character
 (escape_sequence) @constant.character.escape
 (integer_literal) @constant.numeric.integer
 (float_literal) @constant.numeric.float
