@@ -1,0 +1,95 @@
+================================================================================
+Operator precedence
+================================================================================
+
+fn f() { a = b + c * d << 1 == e && !f || g as u8; }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (expression_statement
+        (assignment_expression
+          (identifier)
+          (binary_expression
+            (binary_expression
+              (binary_expression
+                (binary_expression
+                  (binary_expression
+                    (identifier)
+                    (binary_expression
+                      (identifier)
+                      (identifier)))
+                  (integer_literal))
+                (identifier))
+              (unary_expression
+                (identifier)))
+            (cast_expression
+              (identifier)
+              (primitive_type))))))))
+
+================================================================================
+Calls, members, indexing and struct literals
+================================================================================
+
+fn f() { std::printf("%d\n", p.x[0], Point { x: 1, y: -2 }); i++; }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (expression_statement
+        (call_expression
+          (scoped_identifier
+            (identifier)
+            (identifier))
+          (arguments
+            (string_literal
+              (escape_sequence))
+            (index_expression
+              (field_expression
+                (identifier)
+                (field_identifier))
+              (integer_literal))
+            (struct_expression
+              (type_identifier)
+              (field_initializer_list
+                (field_initializer
+                  (field_identifier)
+                  (integer_literal))
+                (field_initializer
+                  (field_identifier)
+                  (unary_expression
+                    (integer_literal))))))))
+      (expression_statement
+        (increment_expression
+          (identifier))))))
+
+================================================================================
+Conditions are not struct literals
+================================================================================
+
+fn f() { if x { y } else if (z) {} }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (expression_statement
+        (if_expression
+          (identifier)
+          (block
+            (identifier))
+          (if_expression
+            (parenthesized_expression
+              (identifier))
+            (block)))))))

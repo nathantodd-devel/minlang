@@ -1,0 +1,31 @@
+import std::printf;
+// <- keyword.import
+//     ^ module
+
+struct Point { x: f32 }
+// <- keyword.type
+//     ^ type
+//             ^ property
+//                ^ type.builtin
+
+fn area(shape: Shape) -> f32 {
+// <- keyword.type
+// ^ function
+//      ^ variable.parameter
+    switch shape {
+//  ^ keyword.conditional
+        case Shape::Circle(radius) {
+//           ^ type
+//                  ^ constructor
+//                         ^ variable
+            return radius * 2.0f32;
+//          ^ keyword.return
+//                          ^ number.float
+        }
+    }
+    printf("%d\n", 1);
+//  ^ function.call
+//         ^ string
+//            ^ string.escape
+//                 ^ number
+}

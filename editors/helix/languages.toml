@@ -1,0 +1,19 @@
+# Add this to ~/.config/helix/languages.toml, then run
+# `hx --grammar fetch && hx --grammar build`, and copy highlights.scm to
+# ~/.config/helix/runtime/queries/minlang/highlights.scm.
+
+[[language]]
+name = "minlang"
+scope = "source.minlang"
+file-types = ["pk"]
+comment-token = "//"
+indent = { tab-width = 4, unit = "    " }
+language-servers = ["minlang"]
+
+[language-server.minlang]
+command = "minlang"
+args = ["lsp"]
+
+[[grammar]]
+name = "minlang"
+source = { git = "https://github.com/nathantodd-devel/minlang", rev = "main", subpath = "editors/tree-sitter-minlang" }

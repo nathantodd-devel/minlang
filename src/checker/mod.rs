@@ -8,6 +8,16 @@ mod errors;
 mod types;
 
 pub use builtins::BuiltinFunction;
+
+/// The members of a built-in module, like `std`, for editor completion.
+pub fn module_members(name: &str) -> Option<Vec<&'static str>> {
+    builtins::module(name).map(builtins::Module::members)
+}
+
+/// Whether `name` is a built-in type, like `u8`.
+pub fn is_primitive(name: &str) -> bool {
+    builtins::PRIMITIVES.contains(&name)
+}
 pub use errors::*;
 pub use types::{IntType, Type};
 
@@ -32,6 +42,8 @@ pub type ItemPath = Vec<String>;
 pub struct StructDef {
     pub name: String,
     pub path: ItemPath,
+    /// Where it's declared.
+    pub position: Location,
     pub fields: Vec<(String, Type)>,
 }
 
@@ -56,6 +68,7 @@ impl VariantShape {
 pub struct EnumDef {
     pub name: String,
     pub path: ItemPath,
+    pub position: Location,
     pub backing_type: Option<Type>,
     pub variants: Vec<(String, VariantShape)>,
     /// Each variant's value: its `= value`, or one more than the previous
@@ -77,6 +90,7 @@ impl EnumDef {
 pub struct FunctionDef {
     pub name: String,
     pub path: ItemPath,
+    pub position: Location,
     pub params: Vec<Type>,
     /// The variables holding the parameters inside the body.
     pub param_variables: Vec<usize>,
@@ -98,6 +112,8 @@ impl FunctionDef {
 #[derive(Debug, Clone)]
 pub struct VariableInfo {
     pub name: String,
+    /// Where it's declared: its `let`, parameter list, loop or pattern.
+    pub position: Location,
     pub ty: Type,
     pub constant: bool,
     /// Declared at the top level, outside any function.
@@ -258,6 +274,17 @@ impl Checker {
     }
 
     pub fn check(&mut self, ast: &Ast) -> Result<CheckedProgram, Vec<CheckError>> {
+        let (program, errors) = self.check_partial(ast);
+        if errors.is_empty() {
+            Ok(program)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Checks `ast`, returning what was learned even if there were errors,
+    /// for editor tooling.
+    pub fn check_partial(&mut self, ast: &Ast) -> (CheckedProgram, Vec<CheckError>) {
         let filename = self.filename.take();
         *self = Self::new(filename.as_deref());
 
@@ -272,10 +299,10 @@ impl Checker {
             }
         }
 
-        if !self.errors.is_empty() {
-            return Err(std::mem::take(&mut self.errors));
-        }
-        Ok(std::mem::take(&mut self.program))
+        (
+            std::mem::take(&mut self.program),
+            std::mem::take(&mut self.errors),
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -356,6 +383,7 @@ impl Checker {
                     self.program.functions.push(FunctionDef {
                         name: name.clone(),
                         path,
+                        position,
                         params: Vec::new(),
                         param_variables: Vec::new(),
                         return_type: None,
@@ -371,6 +399,7 @@ impl Checker {
                     self.program.structs.push(StructDef {
                         name: name.clone(),
                         path,
+                        position,
                         fields: Vec::new(),
                     });
                     self.declare(name, Symbol::Struct(id), position);
@@ -382,6 +411,7 @@ impl Checker {
                     self.program.enums.push(EnumDef {
                         name: name.clone(),
                         path,
+                        position,
                         backing_type: None,
                         variants: Vec::new(),
                         discriminants: Vec::new(),
@@ -669,14 +699,21 @@ impl Checker {
     }
 
     fn type_name(&self, ty: &Type) -> String {
+        self.program.type_name(ty)
+    }
+}
+
+impl CheckedProgram {
+    /// A type as it's written in source, like `u8[4]` or `&geo::Point`.
+    pub fn type_name(&self, ty: &Type) -> String {
         match ty {
             Type::Int(int) => int.name(),
             Type::Float(bits) => format!("f{bits}"),
             Type::Bool => "bool".to_owned(),
             Type::UntypedInt(_) => "integer".to_owned(),
             Type::UntypedFloat => "float".to_owned(),
-            Type::Struct(id) => self.program.structs[*id].name.clone(),
-            Type::Enum(id) => self.program.enums[*id].name.clone(),
+            Type::Struct(id) => self.structs[*id].name.clone(),
+            Type::Enum(id) => self.enums[*id].name.clone(),
             Type::Pointer(pointee) => format!("*{}", self.type_name(pointee)),
             Type::Reference(referent) => format!("&{}", self.type_name(referent)),
             Type::Iterator(item) => format!("iter {}", self.type_name(item)),
@@ -702,7 +739,9 @@ impl Checker {
             Type::Unknown => "unknown".to_owned(),
         }
     }
+}
 
+impl Checker {
     /// Whether a value of type `found` can be used where `expected` is wanted
     /// without a cast: the same type, a lossless widening, an untyped literal
     /// that fits, an array passed where its size is unknown, or `&T` where `*T`
@@ -813,10 +852,11 @@ impl Checker {
     // -------------------------------------------------------------------------
 
     /// Creates a variable without making its name visible yet.
-    fn new_variable(&mut self, name: &str, ty: Type, constant: bool) -> usize {
+    fn new_variable(&mut self, name: &str, ty: Type, constant: bool, position: Location) -> usize {
         let id = self.program.variables.len();
         self.program.variables.push(VariableInfo {
             name: name.to_owned(),
+            position,
             ty,
             constant,
             global: self.function_depth() == 0,
@@ -845,7 +885,7 @@ impl Checker {
         assigned: bool,
         position: Location,
     ) -> usize {
-        let id = self.new_variable(name, ty, constant);
+        let id = self.new_variable(name, ty, constant, position);
         self.bind_variable(id, position);
         if assigned {
             self.mark_assigned(id);
@@ -1410,7 +1450,7 @@ impl Checker {
         let declared = typeinfo.map(|typeinfo| self.resolve_type(typeinfo, position));
         // Created before the value is checked so `@` can refer to it, but only
         // visible by name afterwards
-        let variable = self.new_variable(name, Type::Unknown, constant);
+        let variable = self.new_variable(name, Type::Unknown, constant, position);
         self.program.declarations.insert(id, variable);
         // `let a: u8[4]{0};` is filled by its type's initializer
         let initialized = matches!(

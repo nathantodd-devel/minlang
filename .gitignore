@@ -6,3 +6,9 @@
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# editor integrations: build output and dependencies
+/editors/zed/target
+/editors/zed/extension.wasm
+/editors/vscode/node_modules
+/editors/neovim/parser

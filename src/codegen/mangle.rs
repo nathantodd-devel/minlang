@@ -143,9 +143,11 @@ mod tests {
 
     fn code(ty: Type) -> String {
         let mut program = CheckedProgram::default();
+        let start = crate::parser::Position { line: 0, col: 0 };
         program.structs.push(StructDef {
             name: "Point".to_owned(),
             path: vec!["outer".to_owned()],
+            position: crate::parser::Location { start, end: start },
             fields: Vec::new(),
         });
         type_code(&ty, "geo", &program)

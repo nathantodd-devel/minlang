@@ -1,0 +1,60 @@
+{
+  "name": "minlang",
+  "displayName": "minlang",
+  "description": "minlang support: syntax highlighting, and the minlang language server for errors, hover, go-to-definition and more.",
+  "version": "0.1.0",
+  "publisher": "minlang",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nathantodd-devel/minlang"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "minlang",
+        "aliases": [
+          "minlang"
+        ],
+        "extensions": [
+          ".pk"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "minlang",
+        "scopeName": "source.minlang",
+        "path": "./syntaxes/minlang.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "minlang",
+      "properties": {
+        "minlang.server.path": {
+          "type": "string",
+          "default": "minlang",
+          "description": "The `minlang` executable to run the language server with."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node test/grammar.test.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  }
+}

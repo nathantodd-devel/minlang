@@ -1,0 +1,122 @@
+================================================================================
+Imports
+================================================================================
+
+import std::printf;
+import std::{printf, strcat};
+import types::*;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (import_declaration
+    (identifier)
+    (identifier))
+  (import_declaration
+    (identifier)
+    (identifier)
+    (identifier))
+  (import_declaration
+    (identifier)
+    (glob)))
+
+================================================================================
+Functions, structs and enums
+================================================================================
+
+fn add(a: s32, b: s32) -> s32 { a + b }
+struct Point { x: f32, y: f32 }
+enum Shape: u8 { Circle(f32), Rect { w: f32, h: f32 }, Empty = 4 }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (primitive_type))
+      (parameter
+        (identifier)
+        (primitive_type)))
+    (primitive_type)
+    (block
+      (binary_expression
+        (identifier)
+        (identifier))))
+  (struct_item
+    (type_identifier)
+    (field_declaration_list
+      (field_declaration
+        (field_identifier)
+        (primitive_type))
+      (field_declaration
+        (field_identifier)
+        (primitive_type))))
+  (enum_item
+    (type_identifier)
+    (primitive_type)
+    (enum_variant_list
+      (enum_variant
+        (identifier)
+        (primitive_type))
+      (enum_variant
+        (identifier)
+        (field_declaration_list
+          (field_declaration
+            (field_identifier)
+            (primitive_type))
+          (field_declaration
+            (field_identifier)
+            (primitive_type))))
+      (enum_variant
+        (identifier)
+        (integer_literal)))))
+
+================================================================================
+Let with types and array fills
+================================================================================
+
+fn f() {
+    let a: u8[0x40]{0} = { @ };
+    const B = 2.5f32;
+    let c: *u8[?][8];
+    let d: iter &Point;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (expression_statement
+        (let_declaration
+          (identifier)
+          (array_type
+            (primitive_type)
+            (integer_literal))
+          (block
+            (integer_literal))
+          (block
+            (at))))
+      (expression_statement
+        (let_declaration
+          (identifier)
+          (float_literal)))
+      (expression_statement
+        (let_declaration
+          (identifier)
+          (pointer_type
+            (array_type
+              (array_type
+                (primitive_type))
+              (integer_literal)))))
+      (expression_statement
+        (let_declaration
+          (identifier)
+          (iterator_type
+            (reference_type
+              (type_identifier))))))))

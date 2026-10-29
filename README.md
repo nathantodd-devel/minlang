@@ -55,54 +55,101 @@ invalid literals, used to exercise the tokenizer's error reporting).
 
 ## Getting started
 
-Requires a Rust toolchain (edition 2024).
+Requires a Rust toolchain (edition 2024), and `clang` on the `PATH` to build
+executables. Install the `minlang` command with `cargo install --path .`, or
+use `cargo run --` in its place below.
 
-Run the test suite:
+```bash
+minlang run examples/hello.pk              # compile and run
+minlang run examples/hello.pk -- a b       # pass arguments to the program
+minlang build examples/hello.pk            # writes ./hello
+minlang build -O2 -o hi examples/hello.pk  # optimized (-O0 to -O3), named hi
+minlang check examples/hello.pk            # report errors without compiling
+minlang emit llvm examples/hello.pk        # print the LLVM IR
+minlang emit ast examples/hello.pk         # or the syntax tree, or `tokens`
+```
+
+`run` exits with the program's exit code. `--time` prints how long each
+compiler stage takes, and `minlang help <command>` describes each command's
+options.
+
+Errors show the line they're on, and the parser and checker recover after an
+error, so every problem is reported in one run:
+
+```text
+error: 'count' may be used before it has been assigned
+  --> demo.pk:15:14
+   |
+15 |         i += count;
+   |              ^^^^^
+
+error: could not compile `demo.pk` due to an error
+```
+
+They're colored when written to a terminal; `--color always|never` overrides
+that, and so does setting `NO_COLOR`.
+
+Run the tests and lints with:
 
 ```bash
 cargo test
-```
-
-Lint:
-
-```bash
-cargo clippy --all-targets
-```
-
-Tokenize a file:
-
-```bash
-cargo run -- examples/hello.pk
-```
-
-This prints the token stream as JSON to stdout. Pass `--ast` to parse the
-file and print the AST instead:
-
-```bash
-cargo run -- --ast examples/hello.pk
-```
-
-Pass `--check` to also run the checker, which reports name, type and
-assignment errors (see [Checking](#checking)):
-
-```bash
-cargo run -- --check examples/hello.pk
-```
-
-Errors (with file/line/column, counted from 1) go to stderr. The parser and
-checker recover after an error, so they report every problem in one run.
-
-Compile to an executable (needs `clang` on the `PATH`), or print the LLVM IR:
-
-```bash
-cargo run -- -o hello examples/hello.pk && ./hello
-cargo run -- -O2 -o hello examples/hello.pk    # optimized (-O0 to -O3)
-cargo run -- --emit-llvm examples/hello.pk     # print the .ll
+cargo clippy --all-targets --all-features
 ```
 
 `cargo test` also builds and runs the programs in `tests/programs` and the
 examples, comparing their output with the `.out` file next to each. Those
 tests are skipped if clang isn't installed.
+
+## Editor support
+
+`minlang lsp` is a language server. It reports errors as you type, and
+provides hover (types and signatures), go to definition, find references,
+highlight of matching names, rename, the document outline, and completion of
+keywords, types, names in scope, enum variants after `Enum::` and fields
+after `value.`. Its semantic tokens color names by what they are, using the
+checker: parameters, enum variants, struct fields, built-ins and so on.
+
+For instant coloring before the server answers, there's a tree-sitter grammar
+(`editors/tree-sitter-minlang`, used by Zed, Neovim and Helix) and a TextMate
+grammar (used by VS Code).
+
+All of them need `minlang` on the `PATH`:
+
+```bash
+cargo install --path .
+```
+
+**Zed:** run *zed: install dev extension* and pick `editors/zed`. Zed builds
+the grammar from the commit named in `editors/zed/extension.toml`, so that
+commit must contain `editors/tree-sitter-minlang`. For a local checkout, point
+`repository` at `file:///path/to/minlang` and `rev` at a local commit.
+
+**VS Code:** in `editors/vscode`, run `npm install`, then either open the
+folder and press F5 to try it, or package it with
+`npx @vscode/vsce package` and install the `.vsix`. The `minlang.server.path`
+setting picks a different executable.
+
+**Neovim (0.11+):** build the parser, then add the directory to the runtime
+path. No plugins are needed:
+
+```bash
+editors/neovim/build-parser.sh
+```
+
+```lua
+-- init.lua
+vim.opt.rtp:prepend('/path/to/minlang/editors/neovim')
+```
+
+**Helix:** follow the comments in `editors/helix/languages.toml`.
+
+The highlight queries are shared: Zed and Neovim link to
+`editors/tree-sitter-minlang/queries`, and Helix's copy differs only in capture
+names. `cargo test` checks that every keyword and built-in type is in each
+grammar, and that the copies agree. When `tree-sitter` is installed it also
+runs the grammar's tests and parses every example. After changing
+`grammar.js`, run `tree-sitter generate` and `tree-sitter test` in
+`editors/tree-sitter-minlang`.
 
 ## Syntax overview
 
@@ -173,8 +220,9 @@ needing a generator.
 
 ## Checking
 
-`--check` runs the checker after parsing. Besides undefined names and
-misplaced constructs, it checks the type of every expression.
+`minlang check`, and every command that compiles, runs the checker after
+parsing. Besides undefined names and misplaced constructs, it checks the type
+of every expression.
 
 **Types of literals.** A number without a suffix takes the type expected where
 it's used: `let a: u8 = 255;`, or `yield 0xFFFD;` in a generator of `u32`. It
@@ -312,12 +360,18 @@ src/
                text.rs (.ll backend), inkwell.rs (feature-gated stub),
                mangle.rs (symbol names), layout.rs (sizes and alignment),
                driver.rs (runs clang)
+  lsp/         Language server: mod.rs (protocol), analysis.rs (diagnostics,
+               semantic tokens, hover, definitions, completion)
+  diagnostic.rs  Renders errors with their source line
   error.rs     Shared GenericError<K> positioned error type
   lib.rs       Library root
-  main.rs      CLI entry point
+  main.rs      The `minlang` command
+editors/       Editor support: tree-sitter-minlang/ (grammar and queries),
+               zed/, vscode/, neovim/, helix/
 examples/      Sample .pk source files, with expected output in .out files
 tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs,
-               codegen.rs) and end-to-end programs/ with expected output
+               codegen.rs, cli.rs, lsp.rs, editors.rs) and end-to-end
+               programs/ with expected output
 ```
 
 ## Roadmap
@@ -326,6 +380,7 @@ tests/         Integration tests (tokenizer.rs, parser.rs, checker.rs,
 - [x] Parser / AST with error recovery
 - [x] Type checking
 - [x] Code generation (LLVM IR)
+- [x] Language server and editor support
 
 ## License
 

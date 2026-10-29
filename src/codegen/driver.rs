@@ -32,7 +32,13 @@ pub fn build_executable(ir: &str, output: &Path, optimization: u8) -> Result<(),
 
     let result = result.map_err(|error| CodegenError::Tool {
         tool: "clang".to_owned(),
-        message: error.to_string(),
+        message: if error.kind() == std::io::ErrorKind::NotFound {
+            "clang was not found on the PATH; it's needed to build executables. \
+             Install clang, or use `minlang emit llvm` to get the LLVM IR."
+                .to_owned()
+        } else {
+            error.to_string()
+        },
     })?;
     if !result.status.success() {
         return Err(CodegenError::Tool {

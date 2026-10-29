@@ -1,6 +1,7 @@
 mod errors;
 mod expression;
 mod typeinfo;
+pub mod visit;
 
 pub use errors::*;
 pub use expression::*;

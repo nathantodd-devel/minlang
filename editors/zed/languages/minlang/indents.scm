@@ -1,0 +1,1 @@
+../../../tree-sitter-minlang/queries/indents.scm

@@ -1,0 +1,16 @@
+{
+  "grammars": [
+    {
+      "name": "minlang",
+      "camelcase": "Minlang",
+      "scope": "source.minlang",
+      "path": ".",
+      "file-types": ["pk"],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "description": "minlang grammar for tree-sitter"
+  }
+}

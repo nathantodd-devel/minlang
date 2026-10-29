@@ -48,6 +48,17 @@ impl Tokenizer {
     }
 
     pub fn tokenize(&mut self) -> Result<TokenStream, Vec<TokenizerError>> {
+        let (tokens, errors) = self.tokenize_partial();
+        if errors.is_empty() {
+            Ok(tokens)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// Tokenizes everything it can, returning the tokens along with any
+    /// errors, for editor tooling.
+    pub fn tokenize_partial(&mut self) -> (TokenStream, Vec<TokenizerError>) {
         self.tokens = Vec::new();
         self.errors = Vec::new();
 
@@ -61,11 +72,10 @@ impl Tokenizer {
 
         self.contents = contents;
 
-        if !self.errors.is_empty() {
-            return Err(std::mem::take(&mut self.errors));
-        }
-
-        Ok(std::mem::take(&mut self.tokens))
+        (
+            std::mem::take(&mut self.tokens),
+            std::mem::take(&mut self.errors),
+        )
     }
 
     fn tokenize_line(&mut self, source: &[char], line: usize) {

@@ -1,0 +1,128 @@
+================================================================================
+Switch with patterns
+================================================================================
+
+fn f() {
+    switch s {
+        case Shape::Circle(r) { return r; }
+        case Shape::Rect { w, h: height } { break; }
+        case Shape::Empty {}
+        case (1.5) {}
+        default {}
+    }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (block
+      (expression_statement
+        (switch_expression
+          (identifier)
+          (switch_body
+            (case_clause
+              (variant_pattern
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (binding
+                  (identifier)))
+              (block
+                (expression_statement
+                  (return_expression
+                    (identifier)))))
+            (case_clause
+              (struct_variant_pattern
+                (scoped_identifier
+                  (identifier)
+                  (identifier))
+                (field_pattern
+                  (binding
+                    (identifier)))
+                (field_pattern
+                  (field_identifier)
+                  (binding
+                    (identifier))))
+              (block
+                (expression_statement
+                  (break_expression))))
+            (case_clause
+              (scoped_identifier
+                (identifier)
+                (identifier))
+              (block))
+            (case_clause
+              (parenthesized_expression
+                (float_literal))
+              (block))
+            (default_clause
+              (block))))))))
+
+================================================================================
+Loops
+================================================================================
+
+fn f() -> iter s32 {
+    for (let i: usize = 0; i < n; i++; let item = get(c, i)) { yield item; }
+    for x in xs { continue; }
+    while (a) {}
+    do {} while (b);
+    loop { break; }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (function_item
+    (identifier)
+    (parameters)
+    (iterator_type
+      (primitive_type))
+    (block
+      (expression_statement
+        (for_clause_expression
+          (let_declaration
+            (identifier)
+            (primitive_type)
+            (integer_literal))
+          (binary_expression
+            (identifier)
+            (identifier))
+          (increment_expression
+            (identifier))
+          (let_declaration
+            (identifier)
+            (call_expression
+              (identifier)
+              (arguments
+                (identifier)
+                (identifier))))
+          (block
+            (expression_statement
+              (yield_expression
+                (identifier))))))
+      (expression_statement
+        (for_expression
+          (identifier)
+          (identifier)
+          (block
+            (expression_statement
+              (continue_expression)))))
+      (expression_statement
+        (while_expression
+          (parenthesized_expression
+            (identifier))
+          (block)))
+      (expression_statement
+        (do_expression
+          (block)
+          (parenthesized_expression
+            (identifier))))
+      (expression_statement
+        (loop_expression
+          (block
+            (expression_statement
+              (break_expression))))))))
